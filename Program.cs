@@ -10,28 +10,51 @@ namespace Starchild
 {
     public class MainForm : Form
     {
-        private Panel pegboardPanel;
+        private PegboardPanel pegboardPanel;
         private PegboardParser.PegboardData pegboardData;
         private string pegboardName = "";
         private ComboBox exportDropdown;
+        private TreeView pegTreeView;
+        private Dictionary<TreeNode, PictureBox> pegMap = new Dictionary<TreeNode, PictureBox>();
+        private TreeNode selectedNode = null;
+
+        private Panel pegInfoPanel;
+        private TextBox nameBox, posXBox, posYBox, scaleXBox, scaleYBox, typeBox;
+        private PegboardParser.TransformData selectedPeg;
 
         public MainForm()
         {
             this.Text = "Starchild";
-            this.Size = new Size(800, 600);
+            this.Size = new Size(1000, 600);
 
-            pegboardPanel = new Panel()
+            pegboardPanel = new PegboardPanel()
             {
                 BackColor = Color.LightGray,
                 AutoScroll = true,
                 Location = new Point(10, 40),
-                Size = new Size(800, 600)
+                Size = new Size(800, 700)
             };
 
-            Button importButton = new Button() { 
-                Text = "Open", 
-                Location = new Point(10, 10), 
-                Width = 60 
+            pegTreeView = new TreeView()
+            {
+                Location = new Point(820, 40),
+                Size = new Size(250, 700),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            pegTreeView.AfterSelect += PegTreeView_AfterSelect;
+
+            pegInfoPanel = new Panel()
+            {
+                Location = new Point(1080, 40),
+                Size = new Size(330, 700),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+
+            Button importButton = new Button()
+            {
+                Text = "Open",
+                Location = new Point(10, 10),
+                Width = 60
             };
             importButton.Click += ImportButton_Click;
 
@@ -49,19 +72,22 @@ namespace Starchild
                 Width = 180,
                 DropDownStyle = ComboBoxStyle.DropDownList
             };
-            exportDropdown.Items.AddRange([
+            exportDropdown.Items.AddRange(new string[]
+            {
                 ".dat (With UABEA Header)",
                 ".dat (No Header)",
                 ".bytes (With UABEA Header)",
                 ".bytes (No Header)",
                 ".JSON"
-            ]);
+            });
             exportDropdown.SelectedIndex = 0;
 
             this.Controls.Add(importButton);
             this.Controls.Add(exportDropdown);
             this.Controls.Add(exportButton);
             this.Controls.Add(pegboardPanel);
+            this.Controls.Add(pegTreeView);
+            this.Controls.Add(pegInfoPanel);
         }
 
         private void ImportButton_Click(object sender, EventArgs e)
@@ -96,6 +122,7 @@ namespace Starchild
                         pegboardData = SerializationUtility.DeserializeValue<PegboardParser.PegboardData>(ms, DataFormat.JSON);
                     }
                 }
+                pegboardPanel.Pegs.Clear();
                 DrawPegboard();
             }
         }
@@ -115,10 +142,11 @@ namespace Starchild
             };
             saveFileDialog.Filter = filter;
             saveFileDialog.FileName = pegboardData.name;
-        
+            
             if (saveFileDialog.ShowDialog() == DialogResult.OK)
             {
                 bool includeHeader = selectedFormat.Contains("(With UABEA Header)");
+                bool serializeAsJson = selectedFormat.Contains("JSON");
                 byte[] serializedData;
 
                 using (MemoryStream dataStream = new MemoryStream())
@@ -126,7 +154,7 @@ namespace Starchild
                     SerializationContext context = new SerializationContext();
                     context.Binder = new MscorlibSerializationBinder();
                     SerializationUtility.SerializeValue(pegboardData, dataStream, 
-                        selectedFormat.Contains("JSON") ? DataFormat.JSON : DataFormat.Binary, context);
+                        serializeAsJson ? DataFormat.JSON : DataFormat.Binary, context);
                     serializedData = dataStream.ToArray();
                 }
 
@@ -148,12 +176,160 @@ namespace Starchild
                     }
 
                     writer.Write(serializedData);
-                    AlignTo4(writer, serializedData.Length);
+                    if (!serializeAsJson) { AlignTo4(writer, serializedData.Length); }
                     File.WriteAllBytes(saveFileDialog.FileName, finalStream.ToArray());
                 }
             }
         }
 
+        private void PegTreeView_AfterSelect(object sender, TreeViewEventArgs e)
+        {
+            selectedPeg = (PegboardParser.TransformData)e.Node.Tag;
+            pegboardPanel.HighlightedPeg = selectedPeg;
+            pegboardPanel.Invalidate();
+            UpdatePegInfoPanel(selectedPeg);
+        }
+
+        private void UpdatePegInfoPanel(PegboardParser.TransformData selectedPeg)
+        {
+            pegInfoPanel.Controls.Clear();
+
+            int yOffset = 10;
+            int textBoxWidth = 150;
+            int labelWidth = 150;
+
+            TextBox CreateTextBox(string labelText, string value)
+            {
+                Label label = new Label() { Text = labelText, Location = new Point(10, yOffset), Width = labelWidth };
+                TextBox textBox = new TextBox() { Location = new Point(labelWidth + 10, yOffset), Width = textBoxWidth, Text = value };
+                pegInfoPanel.Controls.Add(label);
+                pegInfoPanel.Controls.Add(textBox);
+                yOffset += 30;
+                return textBox;
+            }
+
+            nameBox = CreateTextBox("name", selectedPeg.name);
+            posXBox = CreateTextBox("posX", selectedPeg.posX.ToString());
+            posYBox = CreateTextBox("posY", selectedPeg.posY.ToString());
+            scaleXBox = CreateTextBox("scaleX", selectedPeg.scaleX.ToString());
+            scaleYBox = CreateTextBox("scaleY", selectedPeg.scaleY.ToString());
+
+            Label enabledLabel = new Label() { Text = "enabled", Location = new Point(10, yOffset), Width = labelWidth };
+            CheckBox enabledBox = new CheckBox() { Location = new Point(labelWidth + 10, yOffset), Checked = selectedPeg.enabled };
+            pegInfoPanel.Controls.Add(enabledLabel);
+            pegInfoPanel.Controls.Add(enabledBox);
+            yOffset += 30;
+
+            // Additional properties
+            if (selectedPeg.prefab != null) {
+                Type pegType = selectedPeg.prefab.GetType();
+                var fields = pegType.GetFields();
+                var properties = pegType.GetProperties();
+
+                foreach (var field in fields)
+                {
+                    if (field.Name == "color") continue;
+
+                    object value = field.GetValue(selectedPeg.prefab);
+                    Label label = new Label()
+                    {
+                        Text = field.Name,
+                        Location = new Point(10, yOffset),
+                        Width = labelWidth
+                    };
+                    TextBox textBox = new TextBox()
+                    {
+                        Location = new Point(labelWidth + 10, yOffset),
+                        Width = textBoxWidth,
+                        Text = value?.ToString()
+                    };
+                    textBox.Tag = field;
+                    pegInfoPanel.Controls.Add(label);
+                    pegInfoPanel.Controls.Add(textBox);
+                    yOffset += 30;
+                }
+
+                foreach (var property in properties)
+                {
+                    object value = property.GetValue(selectedPeg.prefab);
+                    Label label = new Label() { Text = property.Name + ":", Location = new Point(10, yOffset) };
+                    TextBox textBox = new TextBox()
+                    {
+                        Location = new Point(110, yOffset),
+                        Width = 150,
+                        Text = value?.ToString()
+                    };
+                    textBox.Tag = property;
+                    pegInfoPanel.Controls.Add(label);
+                    pegInfoPanel.Controls.Add(textBox);
+                    yOffset += 30;
+                }
+            }
+            
+            Button saveButton = new Button() { Text = "Apply Changes", Location = new Point(10, yOffset), Width = 300 };
+            saveButton.Click += (s, e) => SaveButton_Click(selectedPeg, enabledBox);
+            pegInfoPanel.Controls.Add(saveButton);
+        }
+
+        private void SaveButton_Click(PegboardParser.TransformData selectedPeg, CheckBox enabledBox)
+        {
+            if (selectedPeg == null) return;
+
+            selectedPeg.name = nameBox.Text;
+            if (float.TryParse(posXBox.Text, out float posX)) selectedPeg.posX = posX;
+            if (float.TryParse(posYBox.Text, out float posY)) selectedPeg.posY = posY;
+            if (float.TryParse(scaleXBox.Text, out float scaleX)) selectedPeg.scaleX = scaleX;
+            if (float.TryParse(scaleYBox.Text, out float scaleY)) selectedPeg.scaleY = scaleY;
+            selectedPeg.enabled = enabledBox.Checked;
+
+            var component = selectedPeg.prefab;
+            if (component != null)
+            {
+                foreach (var field in component.GetType().GetFields())
+                {
+                    if (pegInfoPanel.Controls.ContainsKey(field.Name))
+                    {
+                        Control control = pegInfoPanel.Controls[field.Name];
+
+                        try
+                        {
+                            if (field.FieldType.IsEnum)
+                            {
+                                field.SetValue(component, Enum.Parse(field.FieldType, control.Text));
+                            }
+                            else if (field.FieldType == typeof(float))
+                            {
+                                field.SetValue(component, float.Parse(control.Text));
+                            }
+                            else if (field.FieldType == typeof(int))
+                            {
+                                field.SetValue(component, int.Parse(control.Text));
+                            }
+                            else if (field.FieldType == typeof(bool) && control is CheckBox checkBox)
+                            {
+                                field.SetValue(component, checkBox.Checked);
+                            }
+                            else
+                            {
+                                field.SetValue(component, Convert.ChangeType(control.Text, field.FieldType));
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Debug.WriteLine($"Error setting {field.Name}: {ex.Message}");
+                        }
+                    }
+                }
+            }
+
+            if (pegTreeView.SelectedNode != null)
+            {
+                pegTreeView.SelectedNode.Text = selectedPeg.name;
+                pegTreeView.SelectedNode.Tag = selectedPeg;
+            }
+
+            pegboardPanel.Invalidate();
+        }
 
         private bool HasUABEAHeader(BinaryReader reader)
         {
@@ -188,58 +364,40 @@ namespace Starchild
         private void DrawPegboard()
         {
             pegboardPanel.Controls.Clear();
+            pegTreeView.Nodes.Clear();
+            pegMap.Clear();
+
             if (pegboardData?.transforms != null)
             {
                 foreach (var transform in pegboardData.transforms)
                 {
-                    if (transform.enabled)
-                        DrawTransform(transform);
+                    pegboardPanel.Pegs.Add(transform);
+                    DrawTransform(transform, null);
                 }
             }
+            pegboardPanel.Invalidate();
         }
 
-        private void DrawTransform(PegboardParser.TransformData transform)
+        private void DrawTransform(PegboardParser.TransformData transform, TreeNode parentNode)
         {
-            PictureBox peg = new PictureBox()
+            TreeNode pegNode = new TreeNode($"{transform.name}")
             {
-                Size = new Size((int)(15 * transform.scaleX), (int)(15 * transform.scaleY)),
-                Location = new Point((int)(50 * transform.posX + 400), (int)(-50 * transform.posY)),
-                BackColor = Color.Transparent
+                Tag = transform
             };
 
-            peg.Paint += (sender, e) =>
-            {
-                using (SolidBrush brush = new SolidBrush(Color.Black))
-                {
-                    e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                    e.Graphics.FillEllipse(brush, 0, 0, peg.Width, peg.Height);
-                }
-            };
-
-            peg.Region = new Region(new System.Drawing.Drawing2D.GraphicsPath());
-            using (var path = new System.Drawing.Drawing2D.GraphicsPath())
-            {
-                path.AddEllipse(0, 0, peg.Width, peg.Height);
-                peg.Region = new Region(path);
-            }
-
-            pegboardPanel.Controls.Add(peg);
+            if (parentNode == null)
+                pegTreeView.Nodes.Add(pegNode);
+            else
+                parentNode.Nodes.Add(pegNode);
 
             if (transform.child != null)
             {
                 foreach (var child in transform.child)
                 {
-                    if (child.enabled)
-                        DrawTransform(child);
+                    pegboardPanel.Pegs.Add(child);
+                    DrawTransform(child, pegNode);
                 }
             }
-        }
-
-        [STAThread]
-        static void Main()
-        {
-            Application.EnableVisualStyles();
-            Application.Run(new MainForm());
         }
 
         static byte[] ReplaceBytes(byte[] original, byte[] search, byte[] replace)
@@ -274,6 +432,13 @@ namespace Starchild
                     return i;
             }
             return -1;
+        }
+
+        [STAThread]
+        static void Main()
+        {
+            Application.EnableVisualStyles();
+            Application.Run(new MainForm());
         }
     }
 }
