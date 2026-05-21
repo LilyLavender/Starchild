@@ -25,6 +25,7 @@ namespace Starchild
         public MainForm()
         {
             this.Text = "Starchild";
+            this.Icon = new Icon("resources/starchild-icon.ico");
             this.Size = new Size(1000, 600);
 
             pegboardPanel = new PegboardPanel()
@@ -269,6 +270,15 @@ namespace Starchild
             Button saveButton = new Button() { Text = "Apply Changes", Location = new Point(10, yOffset), Width = 300 };
             saveButton.Click += (s, e) => SaveButton_Click(selectedPeg, enabledBox);
             pegInfoPanel.Controls.Add(saveButton);
+            yOffset += 30;
+
+            Button duplicateButton = new Button() { Text = "Duplicate", Location = new Point(10, yOffset), Width = 145 };
+            // duplicateButton.Click += DuplicateButton_Click;
+            pegInfoPanel.Controls.Add(duplicateButton);
+
+            Button deleteButton = new Button() { Text = "Delete", Location = new Point(165, yOffset), Width = 145 };
+            deleteButton.Click += DeleteButton_Click;
+            pegInfoPanel.Controls.Add(deleteButton);
         }
 
         private void SaveButton_Click(PegboardParser.TransformData selectedPeg, CheckBox enabledBox)
@@ -329,6 +339,38 @@ namespace Starchild
             }
 
             pegboardPanel.Invalidate();
+        }
+
+        private void DeleteButton_Click(object sender, EventArgs e)
+        {
+            if (selectedPeg == null || pegTreeView.SelectedNode == null) return;
+
+            DialogResult result = MessageBox.Show($"Are you sure you want to delete {selectedPeg.name}?", "Confirm Deletion", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+            if (result == DialogResult.Yes)
+            {
+                DeletePeg(selectedPeg);
+                pegTreeView.Nodes.Remove(pegTreeView.SelectedNode);
+
+                selectedPeg = null;
+                pegTreeView.SelectedNode = null;
+                pegboardPanel.HighlightedPeg = null;
+                pegboardPanel.Invalidate();
+                pegInfoPanel.Controls.Clear();
+            }
+        }
+
+        private void DeletePeg(PegboardParser.TransformData peg)
+        {
+            pegboardData.transforms.Remove(peg);
+            pegboardPanel.Pegs.Remove(peg);
+            if (peg.child != null)
+            {
+                foreach (var child in peg.child)
+                {
+                    DeletePeg(child);
+                }
+            }
         }
 
         private bool HasUABEAHeader(BinaryReader reader)
