@@ -7,7 +7,14 @@
     <Nullable>enable</Nullable>
     <SelfContained>true</SelfContained>
     <ApplicationIcon>resources/starchild-icon.ico</ApplicationIcon>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>DISABLE_UNITY</DefineConstants>
   </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="docs/**/*.cs" />
+    <Compile Include="docs/serializer-source/OdinSerializerForNetCore/**/*.cs" Exclude="docs/serializer-source/OdinSerializerForNetCore/OdinSerializer/Properties/AssemblyInfo.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <None Update="resources/starchild-icon.ico">
@@ -16,11 +23,12 @@
     </None>
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="System.Text.Json" Version="9.0.3" />
-    <Reference Include="OdinSerializer">
-      <HintPath>libs/OdinSerializer.dll</HintPath>
-    </Reference>
     <Reference Include="Assembly-CSharp">
       <HintPath>libs/Assembly-CSharp.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>libs/UnityEngine.CoreModule.dll</HintPath>
+      <ExcludeAssets>runtime</ExcludeAssets>
     </Reference>
   </ItemGroup>
 </Project>

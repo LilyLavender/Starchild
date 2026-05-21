@@ -1,3 +1,12 @@
+# Build output
 bin/
 obj/
+
+# Project-specific
 archive/
+docs/
+todo.md
+
+# Claude Code
+.claude/
+CLAUDE.md
