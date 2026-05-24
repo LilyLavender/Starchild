@@ -43,6 +43,7 @@ namespace Starchild
                 BorderStyle = BorderStyle.FixedSingle
             };
             pegTreeView.AfterSelect += PegTreeView_AfterSelect;
+            pegboardPanel.PegClicked += OnCanvasPegClicked;
 
             pegInfoPanel = new Panel()
             {
@@ -242,7 +243,8 @@ namespace Starchild
                     {
                         Location = new Point(labelWidth + 10, yOffset),
                         Width = textBoxWidth,
-                        Text = value?.ToString()
+                        Text = value?.ToString(),
+                        Name = field.Name
                     };
                     textBox.Tag = field;
                     pegInfoPanel.Controls.Add(label);
@@ -273,7 +275,7 @@ namespace Starchild
             yOffset += 30;
 
             Button duplicateButton = new Button() { Text = "Duplicate", Location = new Point(10, yOffset), Width = 145 };
-            // duplicateButton.Click += DuplicateButton_Click;
+            duplicateButton.Click += DuplicateButton_Click;
             pegInfoPanel.Controls.Add(duplicateButton);
 
             Button deleteButton = new Button() { Text = "Delete", Location = new Point(165, yOffset), Width = 145 };
@@ -349,6 +351,11 @@ namespace Starchild
 
             if (result == DialogResult.Yes)
             {
+                if (pegTreeView.SelectedNode.Parent != null)
+                {
+                    var parentPeg = (PegboardParser.TransformData)pegTreeView.SelectedNode.Parent.Tag;
+                    parentPeg.child?.Remove(selectedPeg);
+                }
                 DeletePeg(selectedPeg);
                 pegTreeView.Nodes.Remove(pegTreeView.SelectedNode);
 
@@ -358,6 +365,59 @@ namespace Starchild
                 pegboardPanel.Invalidate();
                 pegInfoPanel.Controls.Clear();
             }
+        }
+
+        private void DuplicateButton_Click(object sender, EventArgs e)
+        {
+            if (selectedPeg == null || pegTreeView.SelectedNode == null) return;
+
+            var copy = DeepCopy(selectedPeg);
+            copy.name = selectedPeg.name + "_copy";
+            copy.posX += 0.5f;
+            copy.posY += 0.5f;
+
+            TreeNode parentNode = pegTreeView.SelectedNode.Parent;
+            TreeNode newNode = new TreeNode(copy.name) { Tag = copy };
+
+            if (parentNode != null)
+            {
+                var parentPeg = (PegboardParser.TransformData)parentNode.Tag;
+                parentPeg.child ??= new List<PegboardParser.TransformData>();
+                parentPeg.child.Add(copy);
+                parentNode.Nodes.Add(newNode);
+            }
+            else
+            {
+                pegboardData.transforms.Add(copy);
+                pegTreeView.Nodes.Add(newNode);
+            }
+
+            pegboardPanel.Pegs.Add(copy);
+            pegboardPanel.Invalidate();
+        }
+
+        private PegboardParser.TransformData DeepCopy(PegboardParser.TransformData original)
+        {
+            byte[] bytes = SerializationUtility.SerializeValue(original, DataFormat.Binary);
+            return SerializationUtility.DeserializeValue<PegboardParser.TransformData>(bytes, DataFormat.Binary);
+        }
+
+        private void OnCanvasPegClicked(PegboardParser.TransformData peg)
+        {
+            TreeNode node = FindTreeNode(pegTreeView.Nodes, peg);
+            if (node != null)
+                pegTreeView.SelectedNode = node;
+        }
+
+        private TreeNode FindTreeNode(TreeNodeCollection nodes, PegboardParser.TransformData peg)
+        {
+            foreach (TreeNode node in nodes)
+            {
+                if (node.Tag == peg) return node;
+                TreeNode found = FindTreeNode(node.Nodes, peg);
+                if (found != null) return found;
+            }
+            return null;
         }
 
         private void DeletePeg(PegboardParser.TransformData peg)

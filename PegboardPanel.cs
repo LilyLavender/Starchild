@@ -3,9 +3,28 @@ public class PegboardPanel : Panel
     public List<PegboardParser.TransformData> Pegs { get; set; } = new();
     public PegboardParser.TransformData HighlightedPeg { get; set; }
 
+    public event Action<PegboardParser.TransformData> PegClicked;
+
     public PegboardPanel()
     {
         this.DoubleBuffered = true;
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        foreach (var peg in Pegs)
+        {
+            float x = 50 * peg.posX + 400;
+            float y = -50 * peg.posY;
+            float sizeX = 20 * peg.scaleX;
+            float sizeY = 20 * peg.scaleY;
+            if (e.X >= x && e.X <= x + sizeX && e.Y >= y && e.Y <= y + sizeY)
+            {
+                PegClicked?.Invoke(peg);
+                return;
+            }
+        }
     }
 
     private readonly Dictionary<string, Color> colorByPegType = new()
