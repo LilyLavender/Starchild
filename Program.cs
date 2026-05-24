@@ -23,6 +23,8 @@ namespace Starchild
             this.Text = "Starchild";
             this.Icon = new Icon("resources/starchild-icon.ico");
             this.Size = new Size(1000, 600);
+            this.KeyPreview = true;
+            this.KeyDown += MainForm_KeyDown;
 
             pegboardPanel = new PegboardPanel()
             {
@@ -40,6 +42,7 @@ namespace Starchild
             };
             pegTreeView.AfterSelect += PegTreeView_AfterSelect;
             pegboardPanel.PegClicked += OnCanvasPegClicked;
+            pegboardPanel.PegMoved += OnPegMoved;
 
             pegInfoPanel = new Panel()
             {
@@ -80,9 +83,34 @@ namespace Starchild
             });
             exportDropdown.SelectedIndex = 0;
 
+            CheckBox snapCheck = new CheckBox()
+            {
+                Text = "Snap to Grid",
+                Location = new Point(385, 12),
+                AutoSize = true
+            };
+            snapCheck.CheckedChanged += (s, e) => pegboardPanel.SnapToGrid = snapCheck.Checked;
+
+            CheckBox gridCheck = new CheckBox()
+            {
+                Text = "Show Grid",
+                Location = new Point(480, 12),
+                AutoSize = true
+            };
+            gridCheck.CheckedChanged += (s, e) => { pegboardPanel.ShowGrid = gridCheck.Checked; pegboardPanel.Invalidate(); };
+
+            ContextMenuStrip canvasMenu = new ContextMenuStrip();
+            ToolStripMenuItem toggleEnabledItem = new ToolStripMenuItem("Toggle Enabled");
+            toggleEnabledItem.Click += ToggleEnabled_Click;
+            canvasMenu.Opening += (s, e) => { if (pegboardPanel.SelectedPegs.Count == 0) e.Cancel = true; };
+            canvasMenu.Items.Add(toggleEnabledItem);
+            pegboardPanel.ContextMenuStrip = canvasMenu;
+
             this.Controls.Add(importButton);
             this.Controls.Add(exportDropdown);
             this.Controls.Add(exportButton);
+            this.Controls.Add(snapCheck);
+            this.Controls.Add(gridCheck);
             this.Controls.Add(pegboardPanel);
             this.Controls.Add(pegTreeView);
             this.Controls.Add(pegInfoPanel);
@@ -101,6 +129,53 @@ namespace Starchild
             TreeNode node = FindTreeNode(pegTreeView.Nodes, peg);
             if (node != null)
                 pegTreeView.SelectedNode = node;
+        }
+
+        private void OnPegMoved(PegboardParser.TransformData peg)
+        {
+            if (peg == selectedPeg)
+            {
+                posXBox.Text = peg.posX.ToString();
+                posYBox.Text = peg.posY.ToString();
+            }
+        }
+
+        private void ToggleEnabled_Click(object sender, EventArgs e)
+        {
+            foreach (var peg in pegboardPanel.SelectedPegs)
+                peg.enabled = !peg.enabled;
+            if (selectedPeg != null && pegboardPanel.SelectedPegs.Contains(selectedPeg))
+                UpdatePegInfoPanel(selectedPeg);
+        }
+
+        private void MainForm_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Delete && pegboardPanel.SelectedPegs.Count > 0)
+            {
+                var toDelete = new List<PegboardParser.TransformData>(pegboardPanel.SelectedPegs);
+                string msg = toDelete.Count == 1
+                    ? $"Delete {toDelete[0].name}?"
+                    : $"Delete {toDelete.Count} selected pegs?";
+
+                if (MessageBox.Show(msg, "Confirm Deletion", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                    return;
+
+                foreach (var peg in toDelete)
+                {
+                    TreeNode node = FindTreeNode(pegTreeView.Nodes, peg);
+                    if (node?.Parent != null)
+                        ((PegboardParser.TransformData)node.Parent.Tag).child?.Remove(peg);
+                    DeletePeg(peg);
+                    node?.Remove();
+                }
+
+                selectedPeg = null;
+                pegTreeView.SelectedNode = null;
+                pegboardPanel.HighlightedPeg = null;
+                pegboardPanel.ClearSelection();
+                pegInfoPanel.Controls.Clear();
+                e.Handled = true;
+            }
         }
 
         private TreeNode FindTreeNode(TreeNodeCollection nodes, PegboardParser.TransformData peg)
