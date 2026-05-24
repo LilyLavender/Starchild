@@ -10,15 +10,15 @@ public class PegboardPanel : Panel
         this.DoubleBuffered = true;
     }
 
+    private static (float x, float y, float sizeX, float sizeY) PegScreenBounds(PegboardParser.TransformData peg)
+        => (50 * peg.posX + 400, -50 * peg.posY, 20 * peg.scaleX, 20 * peg.scaleY);
+
     protected override void OnMouseClick(MouseEventArgs e)
     {
         base.OnMouseClick(e);
         foreach (var peg in Pegs)
         {
-            float x = 50 * peg.posX + 400;
-            float y = -50 * peg.posY;
-            float sizeX = 20 * peg.scaleX;
-            float sizeY = 20 * peg.scaleY;
+            var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
             if (e.X >= x && e.X <= x + sizeX && e.Y >= y && e.Y <= y + sizeY)
             {
                 PegClicked?.Invoke(peg);
@@ -65,18 +65,13 @@ public class PegboardPanel : Panel
         foreach (var peg in Pegs)
         {
             string pegType = peg.prefab?.componentType ?? "unknown";
-            Color pegColor = (peg == HighlightedPeg) 
-                ? Color.Red 
+            Color pegColor = (peg == HighlightedPeg)
+                ? Color.Red
                 : colorByPegType.TryGetValue(pegType, out Color typeColor) ? typeColor : Color.Gold;
 
+            var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
             using (SolidBrush brush = new(pegColor))
-            {
-                float x = 50 * peg.posX + 400;
-                float y = -50 * peg.posY;
-                float sizeX = 20 * peg.scaleX;
-                float sizeY = 20 * peg.scaleY;
                 e.Graphics.FillEllipse(brush, x, y, sizeX, sizeY);
-            }
         }
     }
 }
