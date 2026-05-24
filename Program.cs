@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace Starchild
@@ -17,6 +18,9 @@ namespace Starchild
         private Panel pegInfoPanel;
         private TextBox nameBox, posXBox, posYBox, scaleXBox, scaleYBox, typeBox;
         private PegboardParser.TransformData selectedPeg;
+
+        private readonly Stack<(Action undo, Action redo)> _undoStack = new();
+        private readonly Stack<(Action undo, Action redo)> _redoStack = new();
 
         public MainForm()
         {
@@ -99,6 +103,22 @@ namespace Starchild
             };
             gridCheck.CheckedChanged += (s, e) => { pegboardPanel.ShowGrid = gridCheck.Checked; pegboardPanel.Invalidate(); };
 
+            Button undoButton = new Button()
+            {
+                Text = "Undo (Ctrl+Z)",
+                Location = new Point(560, 8),
+                Width = 110
+            };
+            undoButton.Click += (s, e) => ExecuteUndo();
+
+            Button redoButton = new Button()
+            {
+                Text = "Redo (Ctrl+Shift+Z)",
+                Location = new Point(675, 8),
+                Width = 130
+            };
+            redoButton.Click += (s, e) => ExecuteRedo();
+
             ContextMenuStrip canvasMenu = new ContextMenuStrip();
             ToolStripMenuItem toggleEnabledItem = new ToolStripMenuItem("Toggle Enabled");
             toggleEnabledItem.Click += ToggleEnabled_Click;
@@ -111,10 +131,86 @@ namespace Starchild
             this.Controls.Add(exportButton);
             this.Controls.Add(snapCheck);
             this.Controls.Add(gridCheck);
+            this.Controls.Add(undoButton);
+            this.Controls.Add(redoButton);
             this.Controls.Add(pegboardPanel);
             this.Controls.Add(pegTreeView);
             this.Controls.Add(pegInfoPanel);
         }
+
+        // ── Undo / Redo ──────────────────────────────────────────────────────
+
+        internal void PushUndo(Action undo, Action redo)
+        {
+            _undoStack.Push((undo, redo));
+            _redoStack.Clear();
+        }
+
+        private void ExecuteUndo()
+        {
+            if (_undoStack.Count == 0) return;
+            var (undo, redo) = _undoStack.Pop();
+            undo();
+            _redoStack.Push((undo, redo));
+        }
+
+        private void ExecuteRedo()
+        {
+            if (_redoStack.Count == 0) return;
+            var (undo, redo) = _redoStack.Pop();
+            redo();
+            _undoStack.Push((undo, redo));
+        }
+
+        // ── Helpers shared across partial files ───────────────────────────────
+
+        internal void AddPegRecursive(PegboardParser.TransformData peg)
+        {
+            pegboardPanel.Pegs.Add(peg);
+            if (peg.child != null)
+                foreach (var child in peg.child)
+                    AddPegRecursive(child);
+        }
+
+        internal void RemovePegFromPanel(PegboardParser.TransformData peg)
+        {
+            pegboardPanel.Pegs.Remove(peg);
+            if (peg.child != null)
+                foreach (var child in peg.child)
+                    RemovePegFromPanel(child);
+        }
+
+        internal TreeNode CreateTreeNode(PegboardParser.TransformData peg)
+        {
+            var node = new TreeNode(peg.name) { Tag = peg };
+            if (peg.child != null)
+                foreach (var child in peg.child)
+                    node.Nodes.Add(CreateTreeNode(child));
+            return node;
+        }
+
+        internal static void RestoreTransformData(PegboardParser.TransformData target, PegboardParser.TransformData source)
+        {
+            target.name = source.name;
+            target.posX = source.posX;
+            target.posY = source.posY;
+            target.scaleX = source.scaleX;
+            target.scaleY = source.scaleY;
+            target.enabled = source.enabled;
+            if (target.prefab != null && source.prefab != null)
+                foreach (var field in target.prefab.GetType().GetFields())
+                    field.SetValue(target.prefab, field.GetValue(source.prefab));
+        }
+
+        internal void RefreshPegUI(PegboardParser.TransformData peg)
+        {
+            var node = FindTreeNode(pegTreeView.Nodes, peg);
+            if (node != null) node.Text = peg.name;
+            if (peg == selectedPeg) UpdatePegInfoPanel(peg);
+            pegboardPanel.Invalidate();
+        }
+
+        // ── Event handlers ───────────────────────────────────────────────────
 
         private void PegTreeView_AfterSelect(object sender, TreeViewEventArgs e)
         {
@@ -131,13 +227,31 @@ namespace Starchild
                 pegTreeView.SelectedNode = node;
         }
 
-        private void OnPegMoved(PegboardParser.TransformData peg)
+        private void OnPegMoved(PegboardParser.TransformData dragPeg,
+            Dictionary<PegboardParser.TransformData, (float posX, float posY)> oldPositions)
         {
-            if (peg == selectedPeg)
+            if (dragPeg == selectedPeg)
             {
-                posXBox.Text = peg.posX.ToString();
-                posYBox.Text = peg.posY.ToString();
+                posXBox.Text = dragPeg.posX.ToString();
+                posYBox.Text = dragPeg.posY.ToString();
             }
+
+            var newPositions = oldPositions.ToDictionary(kv => kv.Key, kv => (kv.Key.posX, kv.Key.posY));
+
+            PushUndo(
+                undo: () =>
+                {
+                    foreach (var (peg, (ox, oy)) in oldPositions) { peg.posX = ox; peg.posY = oy; }
+                    if (dragPeg == selectedPeg) { posXBox.Text = dragPeg.posX.ToString(); posYBox.Text = dragPeg.posY.ToString(); }
+                    pegboardPanel.Invalidate();
+                },
+                redo: () =>
+                {
+                    foreach (var (peg, (nx, ny)) in newPositions) { peg.posX = nx; peg.posY = ny; }
+                    if (dragPeg == selectedPeg) { posXBox.Text = dragPeg.posX.ToString(); posYBox.Text = dragPeg.posY.ToString(); }
+                    pegboardPanel.Invalidate();
+                }
+            );
         }
 
         private void ToggleEnabled_Click(object sender, EventArgs e)
@@ -150,33 +264,95 @@ namespace Starchild
 
         private void MainForm_KeyDown(object sender, KeyEventArgs e)
         {
+            if (e.Control && !e.Shift && e.KeyCode == Keys.Z) { ExecuteUndo(); e.Handled = true; return; }
+            if (e.Control && e.Shift && e.KeyCode == Keys.Z) { ExecuteRedo(); e.Handled = true; return; }
+
             if (e.KeyCode == Keys.Delete && pegboardPanel.SelectedPegs.Count > 0)
             {
-                var toDelete = new List<PegboardParser.TransformData>(pegboardPanel.SelectedPegs);
-                string msg = toDelete.Count == 1
-                    ? $"Delete {toDelete[0].name}?"
-                    : $"Delete {toDelete.Count} selected pegs?";
-
-                if (MessageBox.Show(msg, "Confirm Deletion", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
-                    return;
-
-                foreach (var peg in toDelete)
-                {
-                    TreeNode node = FindTreeNode(pegTreeView.Nodes, peg);
-                    if (node?.Parent != null)
-                        ((PegboardParser.TransformData)node.Parent.Tag).child?.Remove(peg);
-                    DeletePeg(peg);
-                    node?.Remove();
-                }
-
-                selectedPeg = null;
-                pegTreeView.SelectedNode = null;
-                pegboardPanel.HighlightedPeg = null;
-                pegboardPanel.ClearSelection();
-                pegInfoPanel.Controls.Clear();
+                ExecuteDeletePegs(new List<PegboardParser.TransformData>(pegboardPanel.SelectedPegs), confirm: true);
                 e.Handled = true;
             }
         }
+
+        // ── Shared delete logic ──────────────────────────────────────────────
+
+        internal void ExecuteDeletePegs(List<PegboardParser.TransformData> toDelete, bool confirm)
+        {
+            if (toDelete.Count == 0) return;
+
+            if (confirm)
+            {
+                string msg = toDelete.Count == 1
+                    ? $"Delete {toDelete[0].name}?"
+                    : $"Delete {toDelete.Count} selected pegs?";
+                if (MessageBox.Show(msg, "Confirm Deletion", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes)
+                    return;
+            }
+
+            var records = toDelete
+                .Select(peg =>
+                {
+                    var node = FindTreeNode(pegTreeView.Nodes, peg);
+                    var parentPeg = node?.Parent != null ? (PegboardParser.TransformData)node.Parent.Tag : null;
+                    int dataIdx = parentPeg?.child?.IndexOf(peg) ?? pegboardData.transforms.IndexOf(peg);
+                    return (peg, parentPeg, dataIdx, nodeIdx: node?.Index ?? 0, parentNode: node?.Parent);
+                })
+                .OrderByDescending(r => r.dataIdx)
+                .ToList();
+
+            foreach (var (peg, parentPeg, _, _, _) in records)
+            {
+                parentPeg?.child?.Remove(peg);
+                DeletePeg(peg);
+                FindTreeNode(pegTreeView.Nodes, peg)?.Remove();
+            }
+
+            selectedPeg = null;
+            pegTreeView.SelectedNode = null;
+            pegboardPanel.HighlightedPeg = null;
+            pegboardPanel.ClearSelection();
+            pegInfoPanel.Controls.Clear();
+            pegboardPanel.Invalidate();
+
+            var restoreRecords = records.OrderBy(r => r.dataIdx).ToList();
+            PushUndo(
+                undo: () =>
+                {
+                    foreach (var (peg, parentPeg, dataIdx, nodeIdx, parentNode) in restoreRecords)
+                    {
+                        if (parentPeg != null)
+                        {
+                            parentPeg.child ??= new List<PegboardParser.TransformData>();
+                            parentPeg.child.Insert(Math.Min(dataIdx, parentPeg.child.Count), peg);
+                        }
+                        else
+                        {
+                            pegboardData.transforms.Insert(Math.Min(dataIdx, pegboardData.transforms.Count), peg);
+                        }
+                        AddPegRecursive(peg);
+                        var col = parentNode?.Nodes ?? pegTreeView.Nodes;
+                        col.Insert(Math.Min(nodeIdx, col.Count), CreateTreeNode(peg));
+                    }
+                    pegboardPanel.Invalidate();
+                },
+                redo: () =>
+                {
+                    foreach (var (peg, parentPeg, _, _, _) in records)
+                    {
+                        parentPeg?.child?.Remove(peg);
+                        DeletePeg(peg);
+                        FindTreeNode(pegTreeView.Nodes, peg)?.Remove();
+                    }
+                    selectedPeg = null;
+                    pegTreeView.SelectedNode = null;
+                    pegboardPanel.HighlightedPeg = null;
+                    pegInfoPanel.Controls.Clear();
+                    pegboardPanel.Invalidate();
+                }
+            );
+        }
+
+        // ── Navigation / draw ────────────────────────────────────────────────
 
         private TreeNode FindTreeNode(TreeNodeCollection nodes, PegboardParser.TransformData peg)
         {
@@ -205,7 +381,7 @@ namespace Starchild
             pegboardPanel.Invalidate();
         }
 
-        private void DrawTransform(PegboardParser.TransformData transform, TreeNode parentNode)
+        internal TreeNode DrawTransform(PegboardParser.TransformData transform, TreeNode parentNode)
         {
             TreeNode pegNode = new TreeNode(transform.name) { Tag = transform };
 
@@ -222,6 +398,8 @@ namespace Starchild
                     DrawTransform(child, pegNode);
                 }
             }
+
+            return pegNode;
         }
 
         [STAThread]

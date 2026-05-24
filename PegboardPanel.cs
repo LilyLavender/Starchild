@@ -13,7 +13,7 @@ public class PegboardPanel : Panel
     public bool ShowGrid { get; set; }
 
     public event Action<PegboardParser.TransformData> PegClicked;
-    public event Action<PegboardParser.TransformData> PegMoved;
+    public event Action<PegboardParser.TransformData, Dictionary<PegboardParser.TransformData, (float posX, float posY)>> PegMoved;
 
     private readonly HashSet<PegboardParser.TransformData> _selectedPegs = new();
 
@@ -41,6 +41,14 @@ public class PegboardPanel : Panel
     public PegboardPanel()
     {
         this.DoubleBuffered = true;
+    }
+
+    private void RecordDragPositions(PegboardParser.TransformData peg)
+    {
+        _dragStartPositions[peg] = (peg.posX, peg.posY);
+        if (peg.child != null)
+            foreach (var child in peg.child)
+                RecordDragPositions(child);
     }
 
     public void ClearSelection()
@@ -106,9 +114,9 @@ public class PegboardPanel : Panel
 
             _dragPeg = hitPeg;
             _dragStartMouse = e.Location;
-            _dragStartPositions = new Dictionary<PegboardParser.TransformData, (float, float)>();
+            _dragStartPositions = new Dictionary<PegboardParser.TransformData, (float posX, float posY)>();
             foreach (var peg in _selectedPegs)
-                _dragStartPositions[peg] = (peg.posX, peg.posY);
+                RecordDragPositions(peg);
         }
         else
         {
@@ -172,7 +180,7 @@ public class PegboardPanel : Panel
 
         if (_isDragging)
         {
-            PegMoved?.Invoke(_dragPeg);
+            PegMoved?.Invoke(_dragPeg, _dragStartPositions);
         }
         else if (_dragPeg != null)
         {

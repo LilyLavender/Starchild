@@ -2,17 +2,37 @@ using OdinSerializer;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Linq;
 using System.Windows.Forms;
 
 namespace Starchild
 {
     partial class MainForm
     {
+        private List<PegboardParser.TransformData> GetTargets(PegboardParser.TransformData primary)
+        {
+            if (pegboardPanel.SelectedPegs.Count > 1 && pegboardPanel.SelectedPegs.Contains(primary))
+                return new List<PegboardParser.TransformData>(pegboardPanel.SelectedPegs);
+            return new List<PegboardParser.TransformData> { primary };
+        }
+
         private void UpdatePegInfoPanel(PegboardParser.TransformData selectedPeg)
         {
             pegInfoPanel.Controls.Clear();
 
-            int yOffset = 10;
+            int selCount = pegboardPanel.SelectedPegs.Count;
+            if (selCount > 1)
+            {
+                pegInfoPanel.Controls.Add(new Label()
+                {
+                    Text = $"{selCount} pegs selected — changes apply to all",
+                    Location = new Point(10, 10),
+                    Width = 310,
+                    ForeColor = System.Drawing.Color.DarkBlue
+                });
+            }
+
+            int yOffset = selCount > 1 ? 40 : 10;
             int textBoxWidth = 150;
             int labelWidth = 150;
 
@@ -26,11 +46,20 @@ namespace Starchild
                 return textBox;
             }
 
+            bool multi = selCount > 1;
+
             nameBox = CreateTextBox("name", selectedPeg.name);
             posXBox = CreateTextBox("posX", selectedPeg.posX.ToString());
             posYBox = CreateTextBox("posY", selectedPeg.posY.ToString());
             scaleXBox = CreateTextBox("scaleX", selectedPeg.scaleX.ToString());
             scaleYBox = CreateTextBox("scaleY", selectedPeg.scaleY.ToString());
+
+            if (multi)
+            {
+                nameBox.Enabled = false;
+                posXBox.Enabled = false;
+                posYBox.Enabled = false;
+            }
 
             Label enabledLabel = new Label() { Text = "enabled", Location = new Point(10, yOffset), Width = labelWidth };
             CheckBox enabledBox = new CheckBox() { Location = new Point(labelWidth + 10, yOffset), Checked = selectedPeg.enabled };
@@ -99,44 +128,54 @@ namespace Starchild
             pegInfoPanel.Controls.Add(deleteButton);
         }
 
-        private void SaveButton_Click(PegboardParser.TransformData selectedPeg, CheckBox enabledBox)
+        private void SaveButton_Click(PegboardParser.TransformData peg, CheckBox enabledBox)
         {
-            if (selectedPeg == null) return;
+            if (peg == null) return;
 
-            selectedPeg.name = nameBox.Text;
-            if (float.TryParse(posXBox.Text, out float posX)) selectedPeg.posX = posX;
-            if (float.TryParse(posYBox.Text, out float posY)) selectedPeg.posY = posY;
-            if (float.TryParse(scaleXBox.Text, out float scaleX)) selectedPeg.scaleX = scaleX;
-            if (float.TryParse(scaleYBox.Text, out float scaleY)) selectedPeg.scaleY = scaleY;
-            selectedPeg.enabled = enabledBox.Checked;
+            var targets = GetTargets(peg);
+            var snapshots = targets.Select(t => (t, before: DeepCopy(t))).ToList();
 
-            var component = selectedPeg.prefab;
-            if (component != null)
+            bool posXValid = float.TryParse(posXBox.Text, out float posX);
+            bool posYValid = float.TryParse(posYBox.Text, out float posY);
+            bool scaleXValid = float.TryParse(scaleXBox.Text, out float scaleX);
+            bool scaleYValid = float.TryParse(scaleYBox.Text, out float scaleY);
+
+            bool isMulti = targets.Count > 1;
+            foreach (var target in targets)
             {
-                foreach (var field in component.GetType().GetFields())
+                if (!isMulti) target.name = nameBox.Text;
+                if (!isMulti && posXValid) target.posX = posX;
+                if (!isMulti && posYValid) target.posY = posY;
+                if (scaleXValid) target.scaleX = scaleX;
+                if (scaleYValid) target.scaleY = scaleY;
+                target.enabled = enabledBox.Checked;
+
+                var component = target.prefab;
+                if (component != null)
                 {
-                    if (pegInfoPanel.Controls.ContainsKey(field.Name))
+                    foreach (var field in component.GetType().GetFields())
                     {
-                        Control control = pegInfoPanel.Controls[field.Name];
-
-                        try
+                        if (pegInfoPanel.Controls.ContainsKey(field.Name))
                         {
-                            if (field.FieldType.IsEnum)
-                                field.SetValue(component, Enum.Parse(field.FieldType, control.Text));
-                            else if (field.FieldType == typeof(float))
-                                field.SetValue(component, float.Parse(control.Text));
-                            else if (field.FieldType == typeof(int))
-                                field.SetValue(component, int.Parse(control.Text));
-                            else if (field.FieldType == typeof(bool) && control is CheckBox checkBox)
-                                field.SetValue(component, checkBox.Checked);
-                            else
-                                field.SetValue(component, Convert.ChangeType(control.Text, field.FieldType));
-
-                            control.BackColor = SystemColors.Window;
-                        }
-                        catch
-                        {
-                            control.BackColor = Color.LightCoral;
+                            Control control = pegInfoPanel.Controls[field.Name];
+                            try
+                            {
+                                if (field.FieldType.IsEnum)
+                                    field.SetValue(component, Enum.Parse(field.FieldType, control.Text));
+                                else if (field.FieldType == typeof(float))
+                                    field.SetValue(component, float.Parse(control.Text));
+                                else if (field.FieldType == typeof(int))
+                                    field.SetValue(component, int.Parse(control.Text));
+                                else if (field.FieldType == typeof(bool) && control is CheckBox checkBox)
+                                    field.SetValue(component, checkBox.Checked);
+                                else
+                                    field.SetValue(component, Convert.ChangeType(control.Text, field.FieldType));
+                                control.BackColor = SystemColors.Window;
+                            }
+                            catch
+                            {
+                                control.BackColor = Color.LightCoral;
+                            }
                         }
                     }
                 }
@@ -144,64 +183,87 @@ namespace Starchild
 
             if (pegTreeView.SelectedNode != null)
             {
-                pegTreeView.SelectedNode.Text = selectedPeg.name;
-                pegTreeView.SelectedNode.Tag = selectedPeg;
+                pegTreeView.SelectedNode.Text = peg.name;
+                pegTreeView.SelectedNode.Tag = peg;
             }
 
             pegboardPanel.Invalidate();
+
+            var afters = snapshots.Select(s => (s.t, after: DeepCopy(s.t))).ToList();
+            PushUndo(
+                undo: () => { foreach (var (t, before) in snapshots) { RestoreTransformData(t, before); RefreshPegUI(t); } },
+                redo: () => { foreach (var (t, after) in afters) { RestoreTransformData(t, after); RefreshPegUI(t); } }
+            );
         }
 
         private void DeleteButton_Click(object sender, EventArgs e)
         {
-            if (selectedPeg == null || pegTreeView.SelectedNode == null) return;
-
-            DialogResult result = MessageBox.Show($"Are you sure you want to delete {selectedPeg.name}?", "Confirm Deletion", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
-
-            if (result == DialogResult.Yes)
-            {
-                if (pegTreeView.SelectedNode.Parent != null)
-                {
-                    var parentPeg = (PegboardParser.TransformData)pegTreeView.SelectedNode.Parent.Tag;
-                    parentPeg.child?.Remove(selectedPeg);
-                }
-                DeletePeg(selectedPeg);
-                pegTreeView.Nodes.Remove(pegTreeView.SelectedNode);
-
-                selectedPeg = null;
-                pegTreeView.SelectedNode = null;
-                pegboardPanel.HighlightedPeg = null;
-                pegboardPanel.Invalidate();
-                pegInfoPanel.Controls.Clear();
-            }
+            if (selectedPeg == null) return;
+            ExecuteDeletePegs(GetTargets(selectedPeg), confirm: true);
         }
 
         private void DuplicateButton_Click(object sender, EventArgs e)
         {
-            if (selectedPeg == null || pegTreeView.SelectedNode == null) return;
+            if (selectedPeg == null) return;
 
-            var copy = DeepCopy(selectedPeg);
-            copy.name = selectedPeg.name + "_copy";
-            copy.posX += 0.5f;
-            copy.posY += 0.5f;
+            var targets = GetTargets(selectedPeg);
+            var dupeRecords = new List<(PegboardParser.TransformData copy, PegboardParser.TransformData parentPeg, TreeNode parentNode)>();
 
-            TreeNode parentNode = pegTreeView.SelectedNode.Parent;
-            TreeNode newNode = new TreeNode(copy.name) { Tag = copy };
-
-            if (parentNode != null)
+            foreach (var target in targets)
             {
-                var parentPeg = (PegboardParser.TransformData)parentNode.Tag;
-                parentPeg.child ??= new List<PegboardParser.TransformData>();
-                parentPeg.child.Add(copy);
-                parentNode.Nodes.Add(newNode);
-            }
-            else
-            {
-                pegboardData.transforms.Add(copy);
-                pegTreeView.Nodes.Add(newNode);
+                var node = FindTreeNode(pegTreeView.Nodes, target);
+                if (node == null) continue;
+
+                var copy = DeepCopy(target);
+                copy.name = target.name + "_copy";
+                copy.posX += 0.33f;
+                copy.posY += 0.33f;
+
+                var parentNode = node.Parent;
+                var parentPeg = parentNode != null ? (PegboardParser.TransformData)parentNode.Tag : null;
+
+                if (parentPeg != null)
+                {
+                    parentPeg.child ??= new List<PegboardParser.TransformData>();
+                    parentPeg.child.Add(copy);
+                }
+                else
+                {
+                    pegboardData.transforms.Add(copy);
+                }
+
+                pegboardPanel.Pegs.Add(copy);
+                DrawTransform(copy, parentNode);
+
+                dupeRecords.Add((copy, parentPeg, parentNode));
             }
 
-            pegboardPanel.Pegs.Add(copy);
             pegboardPanel.Invalidate();
+
+            PushUndo(
+                undo: () =>
+                {
+                    foreach (var (copy, parentPeg, _) in dupeRecords)
+                    {
+                        if (parentPeg != null) parentPeg.child?.Remove(copy);
+                        else pegboardData.transforms.Remove(copy);
+                        RemovePegFromPanel(copy);
+                        FindTreeNode(pegTreeView.Nodes, copy)?.Remove();
+                    }
+                    pegboardPanel.Invalidate();
+                },
+                redo: () =>
+                {
+                    foreach (var (copy, parentPeg, parentNode) in dupeRecords)
+                    {
+                        if (parentPeg != null) { parentPeg.child ??= new List<PegboardParser.TransformData>(); parentPeg.child.Add(copy); }
+                        else pegboardData.transforms.Add(copy);
+                        AddPegRecursive(copy);
+                        DrawTransform(copy, parentNode);
+                    }
+                    pegboardPanel.Invalidate();
+                }
+            );
         }
 
         private PegboardParser.TransformData DeepCopy(PegboardParser.TransformData original)
