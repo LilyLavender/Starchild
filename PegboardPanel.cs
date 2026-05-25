@@ -57,6 +57,13 @@ public class PegboardPanel : Panel
         Invalidate();
     }
 
+    public void SetSelection(IEnumerable<PegboardParser.TransformData> pegs)
+    {
+        _selectedPegs.Clear();
+        foreach (var p in pegs)
+            _selectedPegs.Add(p);
+    }
+
     private static (float x, float y, float sizeX, float sizeY) PegScreenBounds(PegboardParser.TransformData peg)
     {
         float sizeX = 20 * peg.scaleX;

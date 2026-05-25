@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Windows.Forms;
 
@@ -9,9 +10,8 @@ namespace Starchild
     public partial class MainForm : Form
     {
         private PegboardPanel pegboardPanel;
-        private PegboardParser.PegboardData pegboardData;
-        private string pegboardName = "";
-        private ComboBox exportDropdown;
+        private RadioButton _formatDat, _formatBytes, _formatJson;
+        private CheckBox _withHeader;
         private TreeView pegTreeView;
         private TreeNode selectedNode = null;
 
@@ -19,8 +19,10 @@ namespace Starchild
         private TextBox nameBox, posXBox, posYBox, scaleXBox, scaleYBox, typeBox;
         private PegboardParser.TransformData selectedPeg;
 
-        private readonly Stack<(Action undo, Action redo)> _undoStack = new();
-        private readonly Stack<(Action undo, Action redo)> _redoStack = new();
+        private readonly List<BoardSession> _sessions = new();
+        private BoardSession _active;
+        private TabControl _tabControl;
+        private bool _switchingSession;
 
         public MainForm()
         {
@@ -34,13 +36,13 @@ namespace Starchild
             {
                 BackColor = Color.LightGray,
                 AutoScroll = true,
-                Location = new Point(10, 40),
+                Location = new Point(10, 68),
                 Size = new Size(800, 700)
             };
 
             pegTreeView = new TreeView()
             {
-                Location = new Point(820, 40),
+                Location = new Point(820, 68),
                 Size = new Size(250, 700),
                 BorderStyle = BorderStyle.FixedSingle
             };
@@ -50,10 +52,22 @@ namespace Starchild
 
             pegInfoPanel = new Panel()
             {
-                Location = new Point(1080, 40),
+                Location = new Point(1080, 68),
                 Size = new Size(330, 700),
                 BorderStyle = BorderStyle.FixedSingle
             };
+
+            _tabControl = new TabControl()
+            {
+                Location = new Point(10, 38),
+                Size = new Size(1400, 28),
+            };
+            _tabControl.SelectedIndexChanged += (s, e) =>
+            {
+                if (_switchingSession) return;
+                SwitchToSession(_tabControl.SelectedIndex);
+            };
+            _tabControl.MouseDown += TabControl_MouseDown;
 
             Button importButton = new Button()
             {
@@ -65,32 +79,62 @@ namespace Starchild
 
             Button exportButton = new Button()
             {
-                Text = "Export as...",
+                Text = "Export",
                 Location = new Point(80, 10),
-                Width = 100
+                Width = 65
             };
             exportButton.Click += ExportButton_Click;
 
-            exportDropdown = new ComboBox()
+            Button exportAllButton = new Button()
             {
-                Location = new Point(190, 10),
-                Width = 180,
-                DropDownStyle = ComboBoxStyle.DropDownList
+                Text = "Export All",
+                Location = new Point(153, 10),
+                Width = 75
             };
-            exportDropdown.Items.AddRange(new string[]
+            exportAllButton.Click += BatchExportButton_Click;
+
+            Label formatLabel = new Label()
             {
-                ".dat (With UABEA Header)",
-                ".dat (No Header)",
-                ".bytes (With UABEA Header)",
-                ".bytes (No Header)",
-                ".JSON"
-            });
-            exportDropdown.SelectedIndex = 0;
+                Text = "Format:",
+                Location = new Point(238, 13),
+                AutoSize = true
+            };
+
+            _formatDat = new RadioButton()
+            {
+                Text = ".dat",
+                Location = new Point(290, 11),
+                AutoSize = true,
+                Checked = true
+            };
+
+            _formatBytes = new RadioButton()
+            {
+                Text = ".bytes",
+                Location = new Point(335, 11),
+                AutoSize = true
+            };
+
+            _formatJson = new RadioButton()
+            {
+                Text = ".json",
+                Location = new Point(395, 11),
+                AutoSize = true
+            };
+
+            _withHeader = new CheckBox()
+            {
+                Text = "With Header",
+                Location = new Point(448, 12),
+                AutoSize = true,
+                Checked = true
+            };
+            _formatJson.CheckedChanged += (s, e) => _withHeader.Enabled = !_formatJson.Checked;
 
             CheckBox snapCheck = new CheckBox()
             {
                 Text = "Snap to Grid",
-                Location = new Point(385, 12),
+                Location = new Point(570, 12),
                 AutoSize = true
             };
             snapCheck.CheckedChanged += (s, e) => pegboardPanel.SnapToGrid = snapCheck.Checked;
@@ -98,7 +142,7 @@ namespace Starchild
             CheckBox gridCheck = new CheckBox()
             {
                 Text = "Show Grid",
-                Location = new Point(480, 12),
+                Location = new Point(665, 12),
                 AutoSize = true
             };
             gridCheck.CheckedChanged += (s, e) => { pegboardPanel.ShowGrid = gridCheck.Checked; pegboardPanel.Invalidate(); };
@@ -106,7 +150,7 @@ namespace Starchild
             Button undoButton = new Button()
             {
                 Text = "Undo (Ctrl+Z)",
-                Location = new Point(560, 8),
+                Location = new Point(755, 8),
                 Width = 110
             };
             undoButton.Click += (s, e) => ExecuteUndo();
@@ -114,7 +158,7 @@ namespace Starchild
             Button redoButton = new Button()
             {
                 Text = "Redo (Ctrl+Shift+Z)",
-                Location = new Point(675, 8),
+                Location = new Point(873, 8),
                 Width = 130
             };
             redoButton.Click += (s, e) => ExecuteRedo();
@@ -127,39 +171,163 @@ namespace Starchild
             pegboardPanel.ContextMenuStrip = canvasMenu;
 
             this.Controls.Add(importButton);
-            this.Controls.Add(exportDropdown);
             this.Controls.Add(exportButton);
+            this.Controls.Add(exportAllButton);
+            this.Controls.Add(formatLabel);
+            this.Controls.Add(_formatDat);
+            this.Controls.Add(_formatBytes);
+            this.Controls.Add(_formatJson);
+            this.Controls.Add(_withHeader);
             this.Controls.Add(snapCheck);
             this.Controls.Add(gridCheck);
             this.Controls.Add(undoButton);
             this.Controls.Add(redoButton);
+            this.Controls.Add(_tabControl);
             this.Controls.Add(pegboardPanel);
             this.Controls.Add(pegTreeView);
             this.Controls.Add(pegInfoPanel);
+        }
+
+        // ── Session management ────────────────────────────────────────────────
+
+        internal void AddSession(BoardSession session)
+        {
+            if (session.FilePath != null)
+            {
+                int existing = _sessions.FindIndex(s => s.FilePath == session.FilePath);
+                if (existing >= 0)
+                {
+                    _tabControl.SelectedIndex = existing;
+                    return;
+                }
+            }
+
+            _sessions.Add(session);
+            _tabControl.TabPages.Add(new TabPage(session.TabLabel));
+            _tabControl.SelectedIndex = _tabControl.TabPages.Count - 1;
+        }
+
+        private void SwitchToSession(int index)
+        {
+            if (_active != null)
+            {
+                _active.SelectedPeg = selectedPeg;
+                _active.SelectedPegs = new HashSet<PegboardParser.TransformData>(pegboardPanel.SelectedPegs);
+            }
+
+            _active = index >= 0 && index < _sessions.Count ? _sessions[index] : null;
+
+            pegboardPanel.Pegs.Clear();
+            pegboardPanel.ClearSelection();
+            pegTreeView.Nodes.Clear();
+            pegInfoPanel.Controls.Clear();
+            selectedPeg = null;
+            selectedNode = null;
+            pegTreeView.SelectedNode = null;
+            pegboardPanel.HighlightedPeg = null;
+
+            if (_active == null) { pegboardPanel.Invalidate(); return; }
+
+            DrawPegboard();
+
+            selectedPeg = _active.SelectedPeg;
+            if (selectedPeg != null)
+            {
+                pegboardPanel.HighlightedPeg = selectedPeg;
+                var node = FindTreeNode(pegTreeView.Nodes, selectedPeg);
+                if (node != null) pegTreeView.SelectedNode = node;
+                UpdatePegInfoPanel(selectedPeg);
+            }
+
+            if (_active.SelectedPegs.Count > 0)
+                pegboardPanel.SetSelection(_active.SelectedPegs);
+
+            pegboardPanel.Invalidate();
+        }
+
+        private void CloseSession(int index)
+        {
+            _switchingSession = true;
+            _sessions.RemoveAt(index);
+            _tabControl.TabPages.RemoveAt(index);
+            _switchingSession = false;
+
+            int newIndex = Math.Min(index, _sessions.Count - 1);
+            if (newIndex >= 0)
+            {
+                _tabControl.SelectedIndex = newIndex;
+                SwitchToSession(newIndex);
+            }
+            else
+            {
+                _active = null;
+                pegboardPanel.Pegs.Clear();
+                pegboardPanel.ClearSelection();
+                pegTreeView.Nodes.Clear();
+                pegInfoPanel.Controls.Clear();
+                selectedPeg = null;
+                pegTreeView.SelectedNode = null;
+                pegboardPanel.HighlightedPeg = null;
+                pegboardPanel.Invalidate();
+            }
+        }
+
+        private void CloseAllSessions()
+        {
+            _switchingSession = true;
+            _sessions.Clear();
+            _tabControl.TabPages.Clear();
+            _switchingSession = false;
+
+            _active = null;
+            pegboardPanel.Pegs.Clear();
+            pegboardPanel.ClearSelection();
+            pegTreeView.Nodes.Clear();
+            pegInfoPanel.Controls.Clear();
+            selectedPeg = null;
+            pegTreeView.SelectedNode = null;
+            pegboardPanel.HighlightedPeg = null;
+            pegboardPanel.Invalidate();
+        }
+
+        private void TabControl_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Right) return;
+            for (int i = 0; i < _tabControl.TabCount; i++)
+            {
+                if (!_tabControl.GetTabRect(i).Contains(e.Location)) continue;
+                int capturedI = i;
+                var menu = new ContextMenuStrip();
+                menu.Items.Add("Close", null, (ms, me) => CloseSession(capturedI));
+                menu.Items.Add("Close All", null, (ms, me) => CloseAllSessions());
+                menu.Show(_tabControl, e.Location);
+                break;
+            }
         }
 
         // ── Undo / Redo ──────────────────────────────────────────────────────
 
         internal void PushUndo(Action undo, Action redo)
         {
-            _undoStack.Push((undo, redo));
-            _redoStack.Clear();
+            if (_active == null) return;
+            _active.UndoStack.Push((undo, redo));
+            _active.RedoStack.Clear();
         }
 
         private void ExecuteUndo()
         {
-            if (_undoStack.Count == 0) return;
-            var (undo, redo) = _undoStack.Pop();
+            if (_active == null || _active.UndoStack.Count == 0) return;
+            var (undo, redo) = _active.UndoStack.Pop();
             undo();
-            _redoStack.Push((undo, redo));
+            _active.RedoStack.Push((undo, redo));
         }
 
         private void ExecuteRedo()
         {
-            if (_redoStack.Count == 0) return;
-            var (undo, redo) = _redoStack.Pop();
+            if (_active == null || _active.RedoStack.Count == 0) return;
+            var (undo, redo) = _active.RedoStack.Pop();
             redo();
-            _undoStack.Push((undo, redo));
+            _active.UndoStack.Push((undo, redo));
         }
 
         // ── Helpers shared across partial files ───────────────────────────────
@@ -278,7 +446,7 @@ namespace Starchild
 
         internal void ExecuteDeletePegs(List<PegboardParser.TransformData> toDelete, bool confirm)
         {
-            if (toDelete.Count == 0) return;
+            if (toDelete.Count == 0 || _active == null) return;
 
             if (confirm)
             {
@@ -289,12 +457,13 @@ namespace Starchild
                     return;
             }
 
+            var data = _active.Data;
             var records = toDelete
                 .Select(peg =>
                 {
                     var node = FindTreeNode(pegTreeView.Nodes, peg);
                     var parentPeg = node?.Parent != null ? (PegboardParser.TransformData)node.Parent.Tag : null;
-                    int dataIdx = parentPeg?.child?.IndexOf(peg) ?? pegboardData.transforms.IndexOf(peg);
+                    int dataIdx = parentPeg?.child?.IndexOf(peg) ?? data.transforms.IndexOf(peg);
                     return (peg, parentPeg, dataIdx, nodeIdx: node?.Index ?? 0, parentNode: node?.Parent);
                 })
                 .OrderByDescending(r => r.dataIdx)
@@ -303,7 +472,7 @@ namespace Starchild
             foreach (var (peg, parentPeg, _, _, _) in records)
             {
                 parentPeg?.child?.Remove(peg);
-                DeletePeg(peg);
+                DeletePeg(peg, data);
                 FindTreeNode(pegTreeView.Nodes, peg)?.Remove();
             }
 
@@ -327,7 +496,7 @@ namespace Starchild
                         }
                         else
                         {
-                            pegboardData.transforms.Insert(Math.Min(dataIdx, pegboardData.transforms.Count), peg);
+                            data.transforms.Insert(Math.Min(dataIdx, data.transforms.Count), peg);
                         }
                         AddPegRecursive(peg);
                         var col = parentNode?.Nodes ?? pegTreeView.Nodes;
@@ -340,7 +509,7 @@ namespace Starchild
                     foreach (var (peg, parentPeg, _, _, _) in records)
                     {
                         parentPeg?.child?.Remove(peg);
-                        DeletePeg(peg);
+                        DeletePeg(peg, data);
                         FindTreeNode(pegTreeView.Nodes, peg)?.Remove();
                     }
                     selectedPeg = null;
@@ -370,9 +539,9 @@ namespace Starchild
             pegboardPanel.Controls.Clear();
             pegTreeView.Nodes.Clear();
 
-            if (pegboardData?.transforms != null)
+            if (_active?.Data?.transforms != null)
             {
-                foreach (var transform in pegboardData.transforms)
+                foreach (var transform in _active.Data.transforms)
                 {
                     pegboardPanel.Pegs.Add(transform);
                     DrawTransform(transform, null);

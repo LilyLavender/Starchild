@@ -229,7 +229,7 @@ namespace Starchild
                 }
                 else
                 {
-                    pegboardData.transforms.Add(copy);
+                    _active.Data.transforms.Add(copy);
                 }
 
                 pegboardPanel.Pegs.Add(copy);
@@ -240,13 +240,14 @@ namespace Starchild
 
             pegboardPanel.Invalidate();
 
+            var data = _active.Data;
             PushUndo(
                 undo: () =>
                 {
                     foreach (var (copy, parentPeg, _) in dupeRecords)
                     {
                         if (parentPeg != null) parentPeg.child?.Remove(copy);
-                        else pegboardData.transforms.Remove(copy);
+                        else data.transforms.Remove(copy);
                         RemovePegFromPanel(copy);
                         FindTreeNode(pegTreeView.Nodes, copy)?.Remove();
                     }
@@ -257,7 +258,7 @@ namespace Starchild
                     foreach (var (copy, parentPeg, parentNode) in dupeRecords)
                     {
                         if (parentPeg != null) { parentPeg.child ??= new List<PegboardParser.TransformData>(); parentPeg.child.Add(copy); }
-                        else pegboardData.transforms.Add(copy);
+                        else data.transforms.Add(copy);
                         AddPegRecursive(copy);
                         DrawTransform(copy, parentNode);
                     }
@@ -272,15 +273,13 @@ namespace Starchild
             return SerializationUtility.DeserializeValue<PegboardParser.TransformData>(bytes, DataFormat.Binary);
         }
 
-        private void DeletePeg(PegboardParser.TransformData peg)
+        private void DeletePeg(PegboardParser.TransformData peg, PegboardParser.PegboardData data)
         {
-            pegboardData.transforms.Remove(peg);
+            data.transforms.Remove(peg);
             pegboardPanel.Pegs.Remove(peg);
             if (peg.child != null)
-            {
                 foreach (var child in peg.child)
-                    DeletePeg(child);
-            }
+                    DeletePeg(child, data);
         }
     }
 }
