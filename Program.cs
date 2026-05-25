@@ -23,6 +23,7 @@ namespace Starchild
         private BoardSession _active;
         private TabControl _tabControl;
         private bool _switchingSession;
+        private ToolStripStatusLabel _coordStatusLabel;
 
         public MainForm()
         {
@@ -49,6 +50,13 @@ namespace Starchild
             pegTreeView.AfterSelect += PegTreeView_AfterSelect;
             pegboardPanel.PegClicked += OnCanvasPegClicked;
             pegboardPanel.PegMoved += OnPegMoved;
+            pegboardPanel.MouseMove += (s, e) =>
+            {
+                float posX = (e.X - 400) / 50f;
+                float posY = -e.Y / 50f;
+                _coordStatusLabel.Text = $"Canvas: ({posX:F2}, {posY:F2})";
+            };
+            pegboardPanel.MouseLeave += (s, e) => _coordStatusLabel.Text = "Canvas: (-, -)";
 
             pegInfoPanel = new Panel()
             {
@@ -170,6 +178,10 @@ namespace Starchild
             canvasMenu.Items.Add(toggleEnabledItem);
             pegboardPanel.ContextMenuStrip = canvasMenu;
 
+            _coordStatusLabel = new ToolStripStatusLabel("Canvas: (-, -)") { Spring = true, TextAlign = System.Drawing.ContentAlignment.MiddleLeft };
+            var statusStrip = new StatusStrip();
+            statusStrip.Items.Add(_coordStatusLabel);
+
             this.Controls.Add(importButton);
             this.Controls.Add(exportButton);
             this.Controls.Add(exportAllButton);
@@ -186,6 +198,7 @@ namespace Starchild
             this.Controls.Add(pegboardPanel);
             this.Controls.Add(pegTreeView);
             this.Controls.Add(pegInfoPanel);
+            this.Controls.Add(statusStrip);
         }
 
         // ── Session management ────────────────────────────────────────────────
@@ -204,7 +217,11 @@ namespace Starchild
 
             _sessions.Add(session);
             _tabControl.TabPages.Add(new TabPage(session.TabLabel));
-            _tabControl.SelectedIndex = _tabControl.TabPages.Count - 1;
+            int newIndex = _tabControl.TabPages.Count - 1;
+            _switchingSession = true;
+            _tabControl.SelectedIndex = newIndex;
+            _switchingSession = false;
+            SwitchToSession(newIndex);
         }
 
         private void SwitchToSession(int index)

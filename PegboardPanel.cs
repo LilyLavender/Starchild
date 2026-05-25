@@ -26,6 +26,8 @@ public class PegboardPanel : Panel
     private Point _rubberBandStart;
     private Rectangle _rubberBandRect;
 
+    private PegboardParser.TransformData _hoveredPeg;
+
     private const int DragThreshold = 4;
 
     private readonly Dictionary<string, Color> colorByPegType = new()
@@ -73,13 +75,21 @@ public class PegboardPanel : Panel
 
     private PegboardParser.TransformData HitTest(Point pt)
     {
+        // Return the first non-highlighted peg hit; fall back to highlighted peg so
+        // overlapping pegs don't get permanently blocked by the selected one.
+        PegboardParser.TransformData fallback = null;
         foreach (var peg in Pegs)
         {
             var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
             if (pt.X >= x && pt.X <= x + sizeX && pt.Y >= y && pt.Y <= y + sizeY)
-                return peg;
+            {
+                if (peg == HighlightedPeg)
+                    fallback = peg;
+                else
+                    return peg;
+            }
         }
-        return null;
+        return fallback;
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
@@ -178,6 +188,23 @@ public class PegboardPanel : Panel
                 Math.Abs(e.Y - _rubberBandStart.Y));
             Invalidate();
         }
+
+        var hovered = (_dragPeg == null && !_isRubberBanding) ? HitTest(e.Location) : null;
+        if (hovered != _hoveredPeg)
+        {
+            _hoveredPeg = hovered;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_hoveredPeg != null)
+        {
+            _hoveredPeg = null;
+            Invalidate();
+        }
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -255,6 +282,12 @@ public class PegboardPanel : Panel
             var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
             using var brush = new SolidBrush(pegColor);
             g.FillEllipse(brush, x, y, sizeX, sizeY);
+
+            if (peg == _hoveredPeg && peg != HighlightedPeg)
+            {
+                using var hoverPen = new Pen(Color.White, 2f);
+                g.DrawEllipse(hoverPen, x, y, sizeX, sizeY);
+            }
         }
 
         if (_isRubberBanding && _rubberBandRect.Width > 0 && _rubberBandRect.Height > 0)
