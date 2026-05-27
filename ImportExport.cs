@@ -48,11 +48,13 @@ namespace Starchild
                     {
                         ms.Position = 0;
                     }
-                    data = SerializationUtility.DeserializeValue<PegboardParser.PegboardData>(ms, DataFormat.Binary);
+                    var ctx = new DeserializationContext { Config = new SerializationConfig { SerializationPolicy = SerializationPolicies.Everything } };
+                    data = SerializationUtility.DeserializeValue<PegboardParser.PegboardData>(ms, DataFormat.Binary, ctx);
                 }
                 else
                 {
-                    data = SerializationUtility.DeserializeValue<PegboardParser.PegboardData>(ms, DataFormat.JSON);
+                    var ctx = new DeserializationContext { Config = new SerializationConfig { SerializationPolicy = SerializationPolicies.Everything } };
+                    data = SerializationUtility.DeserializeValue<PegboardParser.PegboardData>(ms, DataFormat.JSON, ctx);
                 }
 
                 return new BoardSession
@@ -77,6 +79,25 @@ namespace Starchild
             bool header = !json && _withHeader.Checked;
             string ext = json ? ".json" : (_formatBytes.Checked ? ".bytes" : ".dat");
             return (json, header, ext);
+        }
+
+        private void SaveActive()
+        {
+            if (_active == null) return;
+            if (_active.FilePath == null) { ExportButton_Click(null, EventArgs.Empty); return; }
+
+            string ext = Path.GetExtension(_active.FilePath).ToLowerInvariant();
+            bool json = ext == ".json";
+            bool header = !json && _withHeader.Checked;
+
+            try
+            {
+                SerializeAndWrite(_active, json, header, _active.FilePath);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Failed to save:\n{ex.Message}", "Save Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
 
         private void ExportButton_Click(object sender, EventArgs e)
@@ -152,7 +173,7 @@ namespace Starchild
 
             using (var dataStream = new MemoryStream())
             {
-                var context = new SerializationContext { Binder = new MscorlibSerializationBinder() };
+                var context = new SerializationContext { Binder = new MscorlibSerializationBinder(), Config = new SerializationConfig { SerializationPolicy = SerializationPolicies.Everything } };
                 SerializationUtility.SerializeValue(session.Data, dataStream,
                     serializeAsJson ? DataFormat.JSON : DataFormat.Binary, context);
                 serializedData = dataStream.ToArray();

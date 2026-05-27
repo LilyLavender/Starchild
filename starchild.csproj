@@ -30,5 +30,9 @@
       <HintPath>libs/UnityEngine.CoreModule.dll</HintPath>
       <ExcludeAssets>runtime</ExcludeAssets>
     </Reference>
+    <Reference Include="Unity.2D.SpriteShape.Runtime">
+      <HintPath>libs/Unity.2D.SpriteShape.Runtime.dll</HintPath>
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </Reference>
   </ItemGroup>
 </Project>

@@ -14,6 +14,7 @@ public class PegboardPanel : Panel
 
     public event Action<PegboardParser.TransformData> PegClicked;
     public event Action<PegboardParser.TransformData, Dictionary<PegboardParser.TransformData, (float posX, float posY)>> PegMoved;
+    public event Action<float, float> CanvasClicked;
 
     private readonly HashSet<PegboardParser.TransformData> _selectedPegs = new();
 
@@ -32,12 +33,16 @@ public class PegboardPanel : Panel
 
     private readonly Dictionary<string, Color> colorByPegType = new()
     {
-        { "peg_regular", Color.DimGray },
-        { "peg_long", Color.Cyan },
-        { "peg_slime_only", Color.Violet },
-        { "peg_bomb", Color.Black },
-        { "indestructible_peg", Color.Gainsboro },
-        { "bouncer_peg", Color.OliveDrab },
+        { "peg_regular",            Color.DimGray },
+        { "peg_long",               Color.DimGray },
+        { "peg_slime_only",         Color.Violet },
+        { "peg_bomb",               Color.FromArgb(30, 30, 30) },
+        { "indestructible_peg",     Color.Gainsboro },
+        { "bouncer_peg",            Color.OliveDrab },
+        { "obstacle_black_hole",    Color.FromArgb(110, 0, 160) },
+        { "obstacle_bouncer",       Color.FromArgb(200, 80, 20) },
+        { "obstacle_bouncer_mines", Color.FromArgb(110, 90, 30) },
+        { "parent_firework_movement", Color.FromArgb(220, 80, 160) },
     };
 
     public PegboardPanel()
@@ -68,8 +73,8 @@ public class PegboardPanel : Panel
 
     private static (float x, float y, float sizeX, float sizeY) PegScreenBounds(PegboardParser.TransformData peg)
     {
-        float sizeX = 20 * peg.scaleX;
-        float sizeY = 20 * peg.scaleY;
+        float sizeX = 24 * peg.scaleX;
+        float sizeY = 24 * peg.scaleY;
         return (50 * peg.posX + 400 - sizeX / 2, -50 * peg.posY - sizeY / 2, sizeX, sizeY);
     }
 
@@ -80,16 +85,45 @@ public class PegboardPanel : Panel
         PegboardParser.TransformData fallback = null;
         foreach (var peg in Pegs)
         {
+            bool hit;
             var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
             if (pt.X >= x && pt.X <= x + sizeX && pt.Y >= y && pt.Y <= y + sizeY)
-            {
-                if (peg == HighlightedPeg)
-                    fallback = peg;
-                else
-                    return peg;
-            }
+                hit = true;
+            else if (peg.prefab is PegboardParser.LongPegData lpd && lpd.spline != null)
+                hit = HitTestSpline(peg, lpd, pt);
+            else
+                hit = false;
+
+            if (!hit) continue;
+            if (peg == HighlightedPeg) fallback = peg;
+            else return peg;
         }
         return fallback;
+    }
+
+    private static bool HitTestSpline(PegboardParser.TransformData peg, PegboardParser.LongPegData lpd, Point pt)
+    {
+        try
+        {
+            int ptCount = lpd.spline.GetPointCount();
+            if (ptCount < 2) return false;
+            using var path = new System.Drawing.Drawing2D.GraphicsPath();
+            for (int si = 0; si < ptCount - 1; si++)
+            {
+                var p0 = lpd.spline.GetPosition(si);
+                var p1 = lpd.spline.GetPosition(si + 1);
+                var rt = lpd.spline.GetRightTangent(si);
+                var lt = lpd.spline.GetLeftTangent(si + 1);
+                path.AddBezier(
+                    50 * (peg.posX + p0.x) + 400, -50 * (peg.posY + p0.y),
+                    50 * (peg.posX + p0.x + rt.x) + 400, -50 * (peg.posY + p0.y + rt.y),
+                    50 * (peg.posX + p1.x + lt.x) + 400, -50 * (peg.posY + p1.y + lt.y),
+                    50 * (peg.posX + p1.x) + 400, -50 * (peg.posY + p1.y));
+            }
+            using var pen = new Pen(Color.Black, 24f * peg.scaleX);
+            return path.IsOutlineVisible(pt.X, pt.Y, pen);
+        }
+        catch { return false; }
     }
 
     protected override void OnMouseDown(MouseEventArgs e)
@@ -98,14 +132,9 @@ public class PegboardPanel : Panel
 
         if (e.Button == MouseButtons.Right)
         {
-            var hit = HitTest(e.Location);
-            if (hit != null && !_selectedPegs.Contains(hit))
-            {
-                _selectedPegs.Clear();
-                _selectedPegs.Add(hit);
-                PegClicked?.Invoke(hit);
-                Invalidate();
-            }
+            float posX = (e.X - 400) / 50f;
+            float posY = -e.Y / 50f;
+            CanvasClicked?.Invoke(posX, posY);
             return;
         }
 
@@ -220,15 +249,18 @@ public class PegboardPanel : Panel
         {
             PegClicked?.Invoke(_dragPeg);
         }
-        else if (_isRubberBanding && _rubberBandRect.Width > 2 && _rubberBandRect.Height > 2)
+        else if (_isRubberBanding)
         {
-            foreach (var peg in Pegs)
+            if (_rubberBandRect.Width > 2 && _rubberBandRect.Height > 2)
             {
-                var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
-                if (_rubberBandRect.Contains((int)(x + sizeX / 2), (int)(y + sizeY / 2)))
-                    _selectedPegs.Add(peg);
+                foreach (var peg in Pegs)
+                {
+                    var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
+                    if (_rubberBandRect.Contains((int)(x + sizeX / 2), (int)(y + sizeY / 2)))
+                        _selectedPegs.Add(peg);
+                }
+                foreach (var peg in _selectedPegs) { PegClicked?.Invoke(peg); break; }
             }
-            foreach (var peg in _selectedPegs) { PegClicked?.Invoke(peg); break; }
         }
 
         _dragPeg = null;
@@ -238,6 +270,38 @@ public class PegboardPanel : Panel
         _rubberBandRect = Rectangle.Empty;
         Invalidate();
     }
+
+    private Color GetBaseColor(PegboardParser.TransformData peg)
+    {
+        if (peg.prefab is PegboardParser.RegularPegData rpd && (int)rpd.pegType == 128)
+            return Color.SlateGray;
+        string ct = peg.prefab?.componentType ?? "unknown";
+        return colorByPegType.TryGetValue(ct, out Color c) ? c : Color.Gold;
+    }
+
+    private static bool IsInvisiblePeg(PegboardParser.TransformData peg) =>
+        peg.prefab is PegboardParser.RegularPegData rpd && rpd.color.a < 0.01f;
+
+    private static bool IsFakePeg(PegboardParser.TransformData peg) =>
+        peg.prefab is PegboardParser.RegularPegData rpd2 && rpd2.isFakePeg;
+
+    private static bool IsSlimePeg(PegboardParser.TransformData peg) =>
+        peg.prefab is PegboardParser.RegularPegData rpd3 && (int)rpd3.slimeType != 0;
+
+    private static bool IsFlickeringPeg(PegboardParser.TransformData peg) =>
+        peg.components?.Any(c => c is PegboardParser.FlickeringPegData || c is PegboardParser.InvisibleOnAwakeData) == true;
+
+    private static PegboardParser.LinearPegMovementData GetLinearMovement(PegboardParser.TransformData peg) =>
+        peg.components?.OfType<PegboardParser.LinearPegMovementData>().FirstOrDefault();
+
+    private static PegboardParser.MirroredPegData GetMirrorData(PegboardParser.TransformData peg) =>
+        peg.components?.OfType<PegboardParser.MirroredPegData>().FirstOrDefault();
+
+    private static PegboardParser.PegMoveAndReturnData GetMoveAndReturn(PegboardParser.TransformData peg) =>
+        peg.components?.OfType<PegboardParser.PegMoveAndReturnData>().FirstOrDefault();
+
+    private static PegboardParser.RotatingPegCircleData GetRotatingCircle(PegboardParser.TransformData peg) =>
+        peg.components?.OfType<PegboardParser.RotatingPegCircleData>().FirstOrDefault();
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -268,22 +332,195 @@ public class PegboardPanel : Panel
             }
         }
 
+        // Play-area boundary
+        {
+            float bLeft = 50f * -8.5f + 400f;
+            float bTop = 0f;
+            float bWidth = 50f * 17f;
+            float bHeight = 50f * 10f;
+            using var boundsPen = new Pen(Color.FromArgb(55, 200, 200, 200), 1f)
+                { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
+            g.DrawRectangle(boundsPen, bLeft, bTop, bWidth, bHeight);
+        }
+
+        // Mirrored ghost positions (drawn below normal pegs)
         foreach (var peg in Pegs)
         {
-            string pegType = peg.prefab?.componentType ?? "unknown";
-            Color pegColor;
-            if (peg == HighlightedPeg)
-                pegColor = Color.Red;
-            else if (_selectedPegs.Contains(peg))
-                pegColor = Color.Orange;
-            else
-                pegColor = colorByPegType.TryGetValue(pegType, out Color c) ? c : Color.Gold;
+            var mirror = GetMirrorData(peg);
+            if (mirror == null) continue;
+            float ghostX = (mirror.mirrorX != 0 ? mirror.mirrorX * peg.posX : peg.posX);
+            float ghostY = (mirror.mirrorY != 0 ? mirror.mirrorY * peg.posY : peg.posY);
+            float gSizeX = 20 * peg.scaleX;
+            float gSizeY = 20 * peg.scaleY;
+            float gx = 50 * ghostX + 400 - gSizeX / 2;
+            float gy = -50 * ghostY - gSizeY / 2;
+            Color baseCol = GetBaseColor(peg);
+            using var ghostFill = new SolidBrush(Color.FromArgb(40, baseCol));
+            using var ghostPen = new Pen(Color.FromArgb(100, baseCol), 1f)
+                { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
+            g.FillEllipse(ghostFill, gx, gy, gSizeX, gSizeY);
+            g.DrawEllipse(ghostPen, gx, gy, gSizeX, gSizeY);
+        }
+
+        foreach (var peg in Pegs)
+        {
+            bool isInvisible = IsInvisiblePeg(peg);
+            bool isFake = IsFakePeg(peg);
+            bool isDisabled = !peg.enabled;
+            bool isHighlighted = peg == HighlightedPeg;
+            bool isSelected = _selectedPegs.Contains(peg);
+
+            Color baseColor = GetBaseColor(peg);
+            Color pegColor = isHighlighted ? Color.Red
+                           : isSelected    ? Color.Orange
+                           : baseColor;
 
             var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
-            using var brush = new SolidBrush(pegColor);
+
+            // Invisible pegs get a faint fill when not selected/highlighted
+            int fillAlpha = isInvisible && !isHighlighted && !isSelected ? 55 : 255;
+            using var brush = new SolidBrush(Color.FromArgb(fillAlpha, pegColor));
+            string ct = peg.prefab?.componentType ?? "";
+
             g.FillEllipse(brush, x, y, sizeX, sizeY);
 
-            if (peg == _hoveredPeg && peg != HighlightedPeg)
+            // Long peg: Bezier spline through control points (local-space, offset by peg world pos).
+            // Requires SerializationPolicies.Everything so private m_ControlPoints on Spline is populated.
+            if (ct == "peg_long" && peg.prefab is PegboardParser.LongPegData lpd && lpd.spline != null)
+            {
+                try
+                {
+                    int ptCount = lpd.spline.GetPointCount();
+                    if (ptCount >= 2)
+                    {
+                        using var splinePath = new System.Drawing.Drawing2D.GraphicsPath();
+                        for (int si = 0; si < ptCount - 1; si++)
+                        {
+                            var p0 = lpd.spline.GetPosition(si);
+                            var p1 = lpd.spline.GetPosition(si + 1);
+                            var rt = lpd.spline.GetRightTangent(si);
+                            var lt = lpd.spline.GetLeftTangent(si + 1);
+                            float sx0  = 50 * (peg.posX + p0.x) + 400;
+                            float sy0  = -50 * (peg.posY + p0.y);
+                            float scx0 = 50 * (peg.posX + p0.x + rt.x) + 400;
+                            float scy0 = -50 * (peg.posY + p0.y + rt.y);
+                            float scx1 = 50 * (peg.posX + p1.x + lt.x) + 400;
+                            float scy1 = -50 * (peg.posY + p1.y + lt.y);
+                            float sx1  = 50 * (peg.posX + p1.x) + 400;
+                            float sy1  = -50 * (peg.posY + p1.y);
+                            splinePath.AddBezier(sx0, sy0, scx0, scy0, scx1, scy1, sx1, sy1);
+                        }
+                        using var splinePen = new Pen(pegColor, 24f * peg.scaleX)
+                        {
+                            StartCap = System.Drawing.Drawing2D.LineCap.Flat,
+                            EndCap   = System.Drawing.Drawing2D.LineCap.Flat,
+                            LineJoin = System.Drawing.Drawing2D.LineJoin.Miter,
+                        };
+                        g.DrawPath(splinePen, splinePath);
+                    }
+                }
+                catch { }
+            }
+
+            // Obstacle bumper: thick outer ring to distinguish from pegs
+            if (ct is "obstacle_bouncer" or "obstacle_bouncer_mines")
+            {
+                using var bumperPen = new Pen(Color.FromArgb(180, pegColor), 3f);
+                g.DrawEllipse(bumperPen, x - 4, y - 4, sizeX + 8, sizeY + 8);
+            }
+
+            // Black hole: dashed gravity-range ring
+            if (ct == "obstacle_black_hole")
+            {
+                float gravRange = peg.prefab.GetType().GetField("gravityRange")?.GetValue(peg.prefab) is float gr ? gr : 5f;
+                float grSx = gravRange * 20;
+                float gcx = x + sizeX / 2;
+                float gcy = y + sizeY / 2;
+                using var gravPen = new Pen(Color.FromArgb(75, Color.FromArgb(110, 0, 160)), 1.5f)
+                    { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
+                g.DrawEllipse(gravPen, gcx - grSx, gcy - grSx, grSx * 2, grSx * 2);
+            }
+
+            // Disabled: dark overlay so the peg looks grayed out
+            if (isDisabled && !isHighlighted)
+            {
+                using var disabledOverlay = new SolidBrush(Color.FromArgb(150, 40, 40, 40));
+                g.FillEllipse(disabledOverlay, x, y, sizeX, sizeY);
+            }
+
+            // Invisible peg: dashed white outline so editors can locate them
+            if (isInvisible)
+            {
+                using var dashedPen = new Pen(Color.FromArgb(180, Color.White), 1.5f)
+                    { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
+                g.DrawEllipse(dashedPen, x, y, sizeX, sizeY);
+            }
+
+            // Fake peg: X glyph (no collision in-game)
+            if (isFake)
+            {
+                float pad = Math.Max(2f, sizeX * 0.2f);
+                using var xPen = new Pen(Color.FromArgb(180, Color.White), 1.5f);
+                g.DrawLine(xPen, x + pad, y + pad, x + sizeX - pad, y + sizeY - pad);
+                g.DrawLine(xPen, x + sizeX - pad, y + pad, x + pad, y + sizeY - pad);
+            }
+
+            // Slime tint
+            if (IsSlimePeg(peg) && !isHighlighted && !isSelected)
+            {
+                using var slimeBrush = new SolidBrush(Color.FromArgb(80, 20, 200, 50));
+                g.FillEllipse(slimeBrush, x, y, sizeX, sizeY);
+            }
+
+            // Flickering/invisible-on-awake: outer dashed cyan ring
+            if (IsFlickeringPeg(peg))
+            {
+                using var flickPen = new Pen(Color.FromArgb(160, Color.Cyan), 1f)
+                    { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
+                g.DrawEllipse(flickPen, x - 2, y - 2, sizeX + 4, sizeY + 4);
+            }
+
+            // Moving peg: yellow directional arrow
+            var lmd = GetLinearMovement(peg);
+            if (lmd != null)
+            {
+                float cx = x + sizeX / 2;
+                float cy = y + sizeY / 2;
+                float len = Math.Min(sizeX, sizeY) * 0.38f;
+                float vx = lmd.xMovement;
+                float vy = -lmd.yMovement;
+                float mag = MathF.Sqrt(vx * vx + vy * vy);
+                if (mag > 0)
+                {
+                    vx /= mag; vy /= mag;
+                    using var arrowPen = new Pen(Color.FromArgb(200, Color.Yellow), 1.5f);
+                    float ex = cx + vx * len;
+                    float ey = cy + vy * len;
+                    g.DrawLine(arrowPen, cx - vx * len, cy - vy * len, ex, ey);
+                    float hLen = len * 0.45f;
+                    float px = -vy; float py = vx;
+                    g.DrawLine(arrowPen, ex, ey, ex - vx * hLen + px * hLen * 0.4f, ey - vy * hLen + py * hLen * 0.4f);
+                    g.DrawLine(arrowPen, ex, ey, ex - vx * hLen - px * hLen * 0.4f, ey - vy * hLen - py * hLen * 0.4f);
+                }
+            }
+
+            // Oscillating movement path
+            var mar = GetMoveAndReturn(peg);
+            if (mar != null)
+            {
+                float axS = 50 * (peg.posX + mar.targetOffsetAX) + 400;
+                float ayS = -50 * (peg.posY + mar.targetOffsetAY);
+                float bxS = 50 * (peg.posX + mar.targetOffsetBX) + 400;
+                float byS = -50 * (peg.posY + mar.targetOffsetBY);
+                using var pathPen = new Pen(Color.FromArgb(180, Color.Orange), 1.5f)
+                    { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
+                g.DrawLine(pathPen, axS, ayS, bxS, byS);
+                using var endBrush = new SolidBrush(Color.FromArgb(180, Color.Orange));
+                g.FillEllipse(endBrush, axS - 3, ayS - 3, 6, 6);
+                g.FillEllipse(endBrush, bxS - 3, byS - 3, 6, 6);
+            }
+
+            if (peg == _hoveredPeg && !isHighlighted)
             {
                 using var hoverPen = new Pen(Color.White, 2f);
                 g.DrawEllipse(hoverPen, x, y, sizeX, sizeY);
@@ -296,6 +533,42 @@ public class PegboardPanel : Panel
             using var border = new Pen(Color.SteelBlue, 1f) { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
             g.FillRectangle(fill, _rubberBandRect);
             g.DrawRectangle(border, _rubberBandRect);
+        }
+
+        // Movement boundary lines for selected peg with linear movement
+        if (HighlightedPeg != null)
+        {
+            var selLmd = GetLinearMovement(HighlightedPeg);
+            if (selLmd != null)
+            {
+                float leftSx = 50 * selLmd.leftBoundary + 400;
+                float rightSx = 50 * selLmd.rightBoundary + 400;
+                using var boundPen = new Pen(Color.FromArgb(160, Color.Yellow), 1f)
+                    { DashStyle = System.Drawing.Drawing2D.DashStyle.Dash };
+                g.DrawLine(boundPen, leftSx, 0, leftSx, ClientSize.Height);
+                g.DrawLine(boundPen, rightSx, 0, rightSx, ClientSize.Height);
+            }
+        }
+
+        // Rotating circle ring previews
+        foreach (var peg in Pegs)
+        {
+            var rpc = GetRotatingCircle(peg);
+            if (rpc == null || rpc.numPegs <= 0 || rpc.radius <= 0) continue;
+            float cx = 50 * peg.posX + 400;
+            float cy = -50 * peg.posY;
+            float radiusSx = rpc.radius * 50;
+            using var ringPen = new Pen(Color.FromArgb(80, Color.White), 1f)
+                { DashStyle = System.Drawing.Drawing2D.DashStyle.Dot };
+            g.DrawEllipse(ringPen, cx - radiusSx, cy - radiusSx, radiusSx * 2, radiusSx * 2);
+            using var dotBrush = new SolidBrush(Color.FromArgb(150, Color.White));
+            for (int i = 0; i < rpc.numPegs; i++)
+            {
+                float angle = 2 * MathF.PI * i / rpc.numPegs;
+                float dx = cx + radiusSx * MathF.Cos(angle);
+                float dy = cy + radiusSx * MathF.Sin(angle);
+                g.FillEllipse(dotBrush, dx - 2.5f, dy - 2.5f, 5, 5);
+            }
         }
     }
 }

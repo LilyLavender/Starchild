@@ -24,6 +24,9 @@ namespace Starchild
         private TabControl _tabControl;
         private bool _switchingSession;
         private ToolStripStatusLabel _coordStatusLabel;
+        private ToolStripStatusLabel _pegCountLabel;
+        private TreeNode _dragNode;
+        private bool _isDraggingTree;
 
         public MainForm()
         {
@@ -48,6 +51,11 @@ namespace Starchild
                 BorderStyle = BorderStyle.FixedSingle
             };
             pegTreeView.AfterSelect += PegTreeView_AfterSelect;
+            pegTreeView.AllowDrop = true;
+            pegTreeView.ItemDrag += PegTreeView_ItemDrag;
+            pegTreeView.DragEnter += PegTreeView_DragEnter;
+            pegTreeView.DragOver += PegTreeView_DragOver;
+            pegTreeView.DragDrop += PegTreeView_DragDrop;
             pegboardPanel.PegClicked += OnCanvasPegClicked;
             pegboardPanel.PegMoved += OnPegMoved;
             pegboardPanel.MouseMove += (s, e) =>
@@ -62,7 +70,8 @@ namespace Starchild
             {
                 Location = new Point(1080, 68),
                 Size = new Size(330, 700),
-                BorderStyle = BorderStyle.FixedSingle
+                BorderStyle = BorderStyle.FixedSingle,
+                AutoScroll = true
             };
 
             _tabControl = new TabControl()
@@ -171,16 +180,39 @@ namespace Starchild
             };
             redoButton.Click += (s, e) => ExecuteRedo();
 
-            ContextMenuStrip canvasMenu = new ContextMenuStrip();
-            ToolStripMenuItem toggleEnabledItem = new ToolStripMenuItem("Toggle Enabled");
-            toggleEnabledItem.Click += ToggleEnabled_Click;
-            canvasMenu.Opening += (s, e) => { if (pegboardPanel.SelectedPegs.Count == 0) e.Cancel = true; };
-            canvasMenu.Items.Add(toggleEnabledItem);
-            pegboardPanel.ContextMenuStrip = canvasMenu;
+            Label placeLabel = new Label()
+            {
+                Text = "Right click to place:",
+                Location = new Point(1013, 13),
+                AutoSize = true
+            };
+
+            ComboBox placeTypeCombo = new ComboBox()
+            {
+                Location = new Point(1124, 9),
+                Width = 155,
+                DropDownStyle = ComboBoxStyle.DropDownList
+            };
+            placeTypeCombo.Items.AddRange(new[]
+            {
+                "peg_regular", "peg_bomb", "indestructible_peg", "bouncer_peg",
+                "obstacle_black_hole", "peg_long", "peg_slime_only",
+                "obstacle_bouncer", "obstacle_bouncer_mines", "(group)"
+            });
+            placeTypeCombo.SelectedIndex = 0;
+
+            pegboardPanel.CanvasClicked += (posX, posY) =>
+            {
+                string type = placeTypeCombo.SelectedItem?.ToString() ?? "peg_regular";
+                float s = type == "bouncer_peg" ? 3f : 1f;
+                InsertNewPeg(type, posX, posY, s, s);
+            };
 
             _coordStatusLabel = new ToolStripStatusLabel("Canvas: (-, -)") { Spring = true, TextAlign = System.Drawing.ContentAlignment.MiddleLeft };
+            _pegCountLabel = new ToolStripStatusLabel("") { AutoSize = true, TextAlign = System.Drawing.ContentAlignment.MiddleCenter };
             var statusStrip = new StatusStrip();
             statusStrip.Items.Add(_coordStatusLabel);
+            statusStrip.Items.Add(_pegCountLabel);
 
             this.Controls.Add(importButton);
             this.Controls.Add(exportButton);
@@ -194,6 +226,8 @@ namespace Starchild
             this.Controls.Add(gridCheck);
             this.Controls.Add(undoButton);
             this.Controls.Add(redoButton);
+            this.Controls.Add(placeLabel);
+            this.Controls.Add(placeTypeCombo);
             this.Controls.Add(_tabControl);
             this.Controls.Add(pegboardPanel);
             this.Controls.Add(pegTreeView);
@@ -243,9 +277,12 @@ namespace Starchild
             pegTreeView.SelectedNode = null;
             pegboardPanel.HighlightedPeg = null;
 
+            this.Text = _active != null ? $"Starchild — {_active.TabLabel}" : "Starchild";
+            _pegCountLabel.Text = "";
             if (_active == null) { pegboardPanel.Invalidate(); return; }
 
             DrawPegboard();
+            UpdatePegCount();
 
             selectedPeg = _active.SelectedPeg;
             if (selectedPeg != null)
@@ -367,11 +404,82 @@ namespace Starchild
 
         internal TreeNode CreateTreeNode(PegboardParser.TransformData peg)
         {
-            var node = new TreeNode(peg.name) { Tag = peg };
+            var node = new TreeNode(TreeNodeLabel(peg)) { Tag = peg };
+            StyleTreeNode(node, peg);
             if (peg.child != null)
                 foreach (var child in peg.child)
                     node.Nodes.Add(CreateTreeNode(child));
             return node;
+        }
+
+        private static string TreeNodeLabel(PegboardParser.TransformData td)
+        {
+            int compCount = td.components?.Count ?? 0;
+            string compSuffix = compCount > 0 ? $" +{compCount}" : "";
+
+            if (td.prefab == null)
+                return compCount > 0 ? $"{td.name}  [{compSuffix.Trim()}]" : td.name;
+
+            string ct = td.prefab.componentType;
+            string shortType = ct switch
+            {
+                "peg_regular"             => "regular",
+                "peg_long"                => "long peg",
+                "peg_bomb"                => "bomb",
+                "peg_slime_only"          => "slime",
+                "indestructible_peg"      => "indestructible",
+                "bouncer_peg"             => "bouncer",
+                "obstacle_black_hole"     => "black hole",
+                "obstacle_bouncer"        => "bumper",
+                "obstacle_bouncer_mines"  => "mine bumper",
+                "parent_firework_movement" => "firework",
+                null                      => td.prefab.GetType().Name,
+                _                         => ct,
+            };
+
+            if (td.prefab is PegboardParser.RegularPegData rpd)
+            {
+                if ((int)rpd.pegType == 128)   shortType = "dull";
+                else if (rpd.isFakePeg)        shortType += " [fake]";
+                else if (rpd.color.a < 0.01f)  shortType += " [invis]";
+            }
+
+            return $"{td.name}  [{shortType}{compSuffix}]";
+        }
+
+        private void UpdatePegCount()
+        {
+            if (_active == null || pegboardPanel.Pegs.Count == 0) { _pegCountLabel.Text = ""; return; }
+            var counts = pegboardPanel.Pegs
+                .Where(p => p.prefab != null)
+                .GroupBy(p => p.prefab.componentType ?? p.prefab.GetType().Name)
+                .OrderByDescending(g => g.Count())
+                .Select(g =>
+                {
+                    string label = g.Key switch
+                    {
+                        "peg_regular"            => "reg",
+                        "peg_long"               => "long",
+                        "peg_bomb"               => "bomb",
+                        "peg_slime_only"         => "slime",
+                        "indestructible_peg"     => "indestr",
+                        "bouncer_peg"            => "bounce",
+                        "obstacle_black_hole"    => "hole",
+                        "obstacle_bouncer"       => "bumper",
+                        "obstacle_bouncer_mines" => "mine",
+                        _ => g.Key
+                    };
+                    return $"{g.Count()} {label}";
+                });
+            _pegCountLabel.Text = string.Join("  ", counts);
+        }
+
+        private static void StyleTreeNode(TreeNode node, PegboardParser.TransformData peg)
+        {
+            if (!peg.enabled)
+                node.ForeColor = Color.DarkGray;
+            else if (peg.prefab == null)
+                node.ForeColor = Color.SteelBlue;
         }
 
         internal static void RestoreTransformData(PegboardParser.TransformData target, PegboardParser.TransformData source)
@@ -390,7 +498,7 @@ namespace Starchild
         internal void RefreshPegUI(PegboardParser.TransformData peg)
         {
             var node = FindTreeNode(pegTreeView.Nodes, peg);
-            if (node != null) node.Text = peg.name;
+            if (node != null) { node.Text = TreeNodeLabel(peg); StyleTreeNode(node, peg); }
             if (peg == selectedPeg) UpdatePegInfoPanel(peg);
             pegboardPanel.Invalidate();
         }
@@ -399,6 +507,7 @@ namespace Starchild
 
         private void PegTreeView_AfterSelect(object sender, TreeViewEventArgs e)
         {
+            if (_isDraggingTree) return;
             selectedPeg = (PegboardParser.TransformData)e.Node.Tag;
             pegboardPanel.HighlightedPeg = selectedPeg;
             pegboardPanel.Invalidate();
@@ -439,18 +548,122 @@ namespace Starchild
             );
         }
 
-        private void ToggleEnabled_Click(object sender, EventArgs e)
+        private void PegTreeView_ItemDrag(object sender, ItemDragEventArgs e)
         {
-            foreach (var peg in pegboardPanel.SelectedPegs)
-                peg.enabled = !peg.enabled;
-            if (selectedPeg != null && pegboardPanel.SelectedPegs.Contains(selectedPeg))
-                UpdatePegInfoPanel(selectedPeg);
+            _dragNode = (TreeNode)e.Item;
+            pegTreeView.DoDragDrop(e.Item, DragDropEffects.Move);
+        }
+
+        private void PegTreeView_DragEnter(object sender, DragEventArgs e)
+        {
+            e.Effect = e.Data.GetDataPresent(typeof(TreeNode)) ? DragDropEffects.Move : DragDropEffects.None;
+        }
+
+        private void PegTreeView_DragOver(object sender, DragEventArgs e)
+        {
+            e.Effect = DragDropEffects.Move;
+            var pt = pegTreeView.PointToClient(new Point(e.X, e.Y));
+            var hovered = pegTreeView.GetNodeAt(pt);
+            var highlight = ResolveGroupTarget(hovered) ?? hovered;
+            if (highlight != null && highlight != _dragNode)
+            {
+                _isDraggingTree = true;
+                pegTreeView.SelectedNode = highlight;
+                _isDraggingTree = false;
+            }
+        }
+
+        private void PegTreeView_DragDrop(object sender, DragEventArgs e)
+        {
+            if (_dragNode == null || _active == null) return;
+            var pt = pegTreeView.PointToClient(new Point(e.X, e.Y));
+            var hovered = pegTreeView.GetNodeAt(pt);
+            if (hovered == null || hovered == _dragNode) { _dragNode = null; return; }
+
+            var targetNode = ResolveGroupTarget(hovered);
+            if (targetNode == _dragNode || (targetNode != null && TreeNodeIsDescendant(_dragNode, targetNode)))
+            { _dragNode = null; return; }
+            if (targetNode == _dragNode.Parent) { _dragNode = null; return; }
+
+            var dragPeg = (PegboardParser.TransformData)_dragNode.Tag;
+            var targetPeg = targetNode != null ? (PegboardParser.TransformData)targetNode.Tag : null;
+
+            var oldParentNode = _dragNode.Parent;
+            var oldParentPeg = oldParentNode != null ? (PegboardParser.TransformData)oldParentNode.Tag : null;
+            int oldDataIdx = oldParentPeg?.child?.IndexOf(dragPeg) ?? _active.Data.transforms.IndexOf(dragPeg);
+            int oldNodeIdx = _dragNode.Index;
+
+            if (oldParentPeg != null) oldParentPeg.child?.Remove(dragPeg);
+            else _active.Data.transforms.Remove(dragPeg);
+            _dragNode.Remove();
+
+            if (targetNode != null)
+            {
+                targetPeg.child ??= new List<PegboardParser.TransformData>();
+                targetPeg.child.Add(dragPeg);
+                targetNode.Nodes.Add(_dragNode);
+                targetNode.Expand();
+            }
+            else
+            {
+                _active.Data.transforms.Add(dragPeg);
+                pegTreeView.Nodes.Add(_dragNode);
+            }
+            pegTreeView.SelectedNode = _dragNode;
+
+            var capturedDragNode = _dragNode;
+            var data = _active.Data;
+            PushUndo(
+                undo: () =>
+                {
+                    if (targetNode != null) targetPeg.child?.Remove(dragPeg);
+                    else data.transforms.Remove(dragPeg);
+                    capturedDragNode.Remove();
+                    if (oldParentPeg != null) { oldParentPeg.child ??= new List<PegboardParser.TransformData>(); oldParentPeg.child.Insert(Math.Min(oldDataIdx, oldParentPeg.child.Count), dragPeg); }
+                    else data.transforms.Insert(Math.Min(oldDataIdx, data.transforms.Count), dragPeg);
+                    var col = oldParentNode?.Nodes ?? pegTreeView.Nodes;
+                    col.Insert(Math.Min(oldNodeIdx, col.Count), capturedDragNode);
+                    pegTreeView.SelectedNode = capturedDragNode;
+                },
+                redo: () =>
+                {
+                    if (oldParentPeg != null) oldParentPeg.child?.Remove(dragPeg);
+                    else data.transforms.Remove(dragPeg);
+                    capturedDragNode.Remove();
+                    if (targetNode != null) { targetPeg.child ??= new List<PegboardParser.TransformData>(); targetPeg.child.Add(dragPeg); targetNode.Nodes.Add(capturedDragNode); targetNode.Expand(); }
+                    else { data.transforms.Add(dragPeg); pegTreeView.Nodes.Add(capturedDragNode); }
+                    pegTreeView.SelectedNode = capturedDragNode;
+                }
+            );
+
+            _dragNode = null;
+        }
+
+        private static TreeNode ResolveGroupTarget(TreeNode hovered)
+        {
+            if (hovered == null) return null;
+            var peg = hovered.Tag as PegboardParser.TransformData;
+            if (peg?.prefab == null) return hovered; // it's a group
+            return hovered.Parent; // null = root level
+        }
+
+        private static bool TreeNodeIsDescendant(TreeNode ancestor, TreeNode node)
+        {
+            var n = node.Parent;
+            while (n != null)
+            {
+                if (n == ancestor) return true;
+                n = n.Parent;
+            }
+            return false;
         }
 
         private void MainForm_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.Control && !e.Shift && e.KeyCode == Keys.Z) { ExecuteUndo(); e.Handled = true; return; }
             if (e.Control && e.Shift && e.KeyCode == Keys.Z) { ExecuteRedo(); e.Handled = true; return; }
+            if (e.Control && !e.Shift && e.KeyCode == Keys.S) { SaveActive(); e.Handled = true; return; }
+            if (e.Control && !e.Shift && e.KeyCode == Keys.O) { ImportButton_Click(null, EventArgs.Empty); e.Handled = true; return; }
 
             if (e.KeyCode == Keys.Delete && pegboardPanel.SelectedPegs.Count > 0)
             {
@@ -569,7 +782,8 @@ namespace Starchild
 
         internal TreeNode DrawTransform(PegboardParser.TransformData transform, TreeNode parentNode)
         {
-            TreeNode pegNode = new TreeNode(transform.name) { Tag = transform };
+            TreeNode pegNode = new TreeNode(TreeNodeLabel(transform)) { Tag = transform };
+            StyleTreeNode(pegNode, transform);
 
             if (parentNode == null)
                 pegTreeView.Nodes.Add(pegNode);
