@@ -31,7 +31,10 @@ namespace Starchild
         public MainForm()
         {
             this.Text = "Starchild";
-            this.Icon = new Icon("resources/starchild-icon.ico");
+            var iconStream = System.Reflection.Assembly.GetExecutingAssembly()
+                .GetManifestResourceStream("starchild.resources.starchild-icon.ico");
+            if (iconStream != null)
+                this.Icon = new Icon(iconStream);
             this.Size = new Size(1000, 600);
             this.KeyPreview = true;
             this.KeyDown += MainForm_KeyDown;

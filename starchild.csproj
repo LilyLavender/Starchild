@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
     <ApplicationIcon>resources/starchild-icon.ico</ApplicationIcon>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefineConstants>DISABLE_UNITY</DefineConstants>
@@ -17,10 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="resources/starchild-icon.ico">
-        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </None>
+    <EmbeddedResource Include="resources/starchild-icon.ico" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="System.Text.Json" Version="9.0.3" />
     <Reference Include="Assembly-CSharp">
