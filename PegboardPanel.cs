@@ -275,9 +275,15 @@ public class PegboardPanel : Panel
     {
         if (peg.prefab is PegboardParser.RegularPegData rpd && (int)rpd.pegType == 128)
             return Color.SlateGray;
-        string ct = peg.prefab?.componentType ?? "unknown";
+        string ct = peg.prefab?.componentType ?? FallbackComponentType(peg.prefab);
         return colorByPegType.TryGetValue(ct, out Color c) ? c : Color.Gold;
     }
+
+    private static string FallbackComponentType(PegboardParser.Component prefab) => prefab switch
+    {
+        PegboardParser.BombData => "peg_bomb",
+        _ => "unknown"
+    };
 
     private static bool IsInvisiblePeg(PegboardParser.TransformData peg) =>
         peg.prefab is PegboardParser.RegularPegData rpd && rpd.color.a < 0.01f;

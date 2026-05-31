@@ -200,7 +200,7 @@ namespace Starchild
             {
                 "peg_regular", "peg_bomb", "indestructible_peg", "bouncer_peg",
                 "obstacle_black_hole", "peg_long", "peg_slime_only",
-                "obstacle_bouncer", "obstacle_bouncer_mines", "(group)"
+                "obstacle_bouncer", "obstacle_bouncer_mines", "parent_firework_movement", "(group)"
             });
             placeTypeCombo.SelectedIndex = 0;
 
@@ -436,7 +436,11 @@ namespace Starchild
                 "obstacle_bouncer"        => "bumper",
                 "obstacle_bouncer_mines"  => "mine bumper",
                 "parent_firework_movement" => "firework",
-                null                      => td.prefab.GetType().Name,
+                null => td.prefab switch
+                {
+                    PegboardParser.BombData => "bomb",
+                    _ => td.prefab.GetType().Name
+                },
                 _                         => ct,
             };
 
@@ -455,7 +459,7 @@ namespace Starchild
             if (_active == null || pegboardPanel.Pegs.Count == 0) { _pegCountLabel.Text = ""; return; }
             var counts = pegboardPanel.Pegs
                 .Where(p => p.prefab != null)
-                .GroupBy(p => p.prefab.componentType ?? p.prefab.GetType().Name)
+                .GroupBy(p => p.prefab.componentType ?? (p.prefab is PegboardParser.BombData ? "peg_bomb" : p.prefab.GetType().Name))
                 .OrderByDescending(g => g.Count())
                 .Select(g =>
                 {

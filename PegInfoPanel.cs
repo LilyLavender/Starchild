@@ -469,7 +469,13 @@ namespace Starchild
                     "attr_flickering_peg",
                     "attr_invisible_on_awake",
                     "attr_moving_peg_return",
+                    "attr_offset_pos_on_start",
                     "parent_rotating_peg_circle",
+                    "parent_flickering_loop",
+                    "peg_square_movement",
+                    "boids_peg_layout",
+                    "dragon_peg_layout_simulator ",
+                    "obstacle_obscured_peg_grid",
                 });
                 compDropdown.SelectedIndex = 0;
 
@@ -480,17 +486,31 @@ namespace Starchild
                     if (chosen == null) return;
                     Type compType = chosen switch
                     {
-                        "attr_moving_peg_linear"     => typeof(PegboardParser.LinearPegMovementData),
-                        "attr_mirrored_peg"          => typeof(PegboardParser.MirroredPegData),
-                        "attr_flickering_peg"        => typeof(PegboardParser.FlickeringPegData),
-                        "attr_invisible_on_awake"    => typeof(PegboardParser.InvisibleOnAwakeData),
-                        "attr_moving_peg_return"     => typeof(PegboardParser.PegMoveAndReturnData),
-                        "parent_rotating_peg_circle" => typeof(PegboardParser.RotatingPegCircleData),
+                        "attr_moving_peg_linear"      => typeof(PegboardParser.LinearPegMovementData),
+                        "attr_mirrored_peg"           => typeof(PegboardParser.MirroredPegData),
+                        "attr_flickering_peg"         => typeof(PegboardParser.FlickeringPegData),
+                        "attr_invisible_on_awake"     => typeof(PegboardParser.InvisibleOnAwakeData),
+                        "attr_moving_peg_return"      => typeof(PegboardParser.PegMoveAndReturnData),
+                        "attr_offset_pos_on_start"    => typeof(PegboardParser.OffsetPositionOnStartData),
+                        "parent_rotating_peg_circle"  => typeof(PegboardParser.RotatingPegCircleData),
+                        "parent_flickering_loop"      => typeof(PegboardParser.FlickeringPegLoopCreatorData),
+                        "peg_square_movement"         => typeof(PegboardParser.PegSquareMovementData),
+                        "boids_peg_layout"            => typeof(PegboardParser.BoidsPegLayoutData),
+                        "dragon_peg_layout_simulator " => typeof(PegboardParser.DragonPegLayoutSimData),
+                        "obstacle_obscured_peg_grid"  => typeof(PegboardParser.RandomObscuredPegGridData),
                         _ => null
                     };
                     if (compType == null) return;
                     var newComp = (PegboardParser.Component)RuntimeHelpers.GetUninitializedObject(compType);
                     newComp.componentType = chosen;
+                    if (newComp is PegboardParser.LinearPegMovementData lpm)
+                    {
+                        var lpmType = typeof(PegboardParser.LinearPegMovementData);
+                        lpmType.GetField("isKinematic")?.SetValue(lpm, true);
+                        lpmType.GetField("mass")?.SetValue(lpm, 1f);
+                        lpmType.GetField("gravityScale")?.SetValue(lpm, 1f);
+                        lpmType.GetField("angularDrag")?.SetValue(lpm, 0.05f);
+                    }
                     selectedPeg.components ??= new List<PegboardParser.Component>();
                     selectedPeg.components.Add(newComp);
                     PushUndo(
