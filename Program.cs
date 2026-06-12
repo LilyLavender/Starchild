@@ -27,6 +27,9 @@ namespace Starchild
         private ToolStripStatusLabel _pegCountLabel;
         private TreeNode _dragNode;
         private bool _isDraggingTree;
+        private string _lastAddedComponentType;
+        private TreeNode _selectAnchorNode;
+        private bool _isSyncingTreeFromCanvas;
 
         public MainForm()
         {
@@ -151,20 +154,20 @@ namespace Starchild
             };
             _formatJson.CheckedChanged += (s, e) => _withHeader.Enabled = !_formatJson.Checked;
 
-            CheckBox snapCheck = new CheckBox()
-            {
-                Text = "Snap to Grid",
-                Location = new Point(570, 12),
-                AutoSize = true
-            };
-            snapCheck.CheckedChanged += (s, e) => pegboardPanel.SnapToGrid = snapCheck.Checked;
-
             CheckBox gridCheck = new CheckBox()
             {
                 Text = "Show Grid",
-                Location = new Point(665, 12),
+                Location = new Point(570, 12),
                 AutoSize = true
             };
+
+            CheckBox snapCheck = new CheckBox()
+            {
+                Text = "Snap to Grid",
+                Location = new Point(650, 12),
+                AutoSize = true
+            };
+            snapCheck.CheckedChanged += (s, e) => pegboardPanel.SnapToGrid = snapCheck.Checked;
             gridCheck.CheckedChanged += (s, e) => { pegboardPanel.ShowGrid = gridCheck.Checked; pegboardPanel.Invalidate(); };
 
             Button undoButton = new Button()
@@ -277,6 +280,7 @@ namespace Starchild
             pegInfoPanel.Controls.Clear();
             selectedPeg = null;
             selectedNode = null;
+            _selectAnchorNode = null;
             pegTreeView.SelectedNode = null;
             pegboardPanel.HighlightedPeg = null;
 
@@ -515,17 +519,89 @@ namespace Starchild
         private void PegTreeView_AfterSelect(object sender, TreeViewEventArgs e)
         {
             if (_isDraggingTree) return;
-            selectedPeg = (PegboardParser.TransformData)e.Node.Tag;
-            pegboardPanel.HighlightedPeg = selectedPeg;
+            var peg = (PegboardParser.TransformData)e.Node.Tag;
+
+            if (_isSyncingTreeFromCanvas)
+            {
+                selectedPeg = peg;
+                pegboardPanel.HighlightedPeg = peg;
+                HighlightTreeSelection();
+                UpdatePegInfoPanel(selectedPeg);
+                return;
+            }
+
+            bool shift = (ModifierKeys & Keys.Shift) != 0;
+            bool ctrl = (ModifierKeys & Keys.Control) != 0;
+
+            if (shift && _selectAnchorNode != null)
+            {
+                var flat = GetAllNodesFlat(pegTreeView.Nodes);
+                int i1 = flat.IndexOf(_selectAnchorNode);
+                int i2 = flat.IndexOf(e.Node);
+                if (i1 >= 0 && i2 >= 0)
+                {
+                    int lo = Math.Min(i1, i2), hi = Math.Max(i1, i2);
+                    var range = flat.GetRange(lo, hi - lo + 1)
+                        .Select(n => n.Tag as PegboardParser.TransformData)
+                        .Where(p => p != null);
+                    pegboardPanel.SetSelection(range);
+                }
+            }
+            else if (ctrl)
+            {
+                var current = new HashSet<PegboardParser.TransformData>(pegboardPanel.SelectedPegs);
+                if (!current.Remove(peg)) current.Add(peg);
+                pegboardPanel.SetSelection(current);
+                _selectAnchorNode = e.Node;
+            }
+            else
+            {
+                pegboardPanel.SetSelection(new[] { peg });
+                _selectAnchorNode = e.Node;
+            }
+
+            selectedPeg = peg;
+            pegboardPanel.HighlightedPeg = peg;
+            HighlightTreeSelection();
             pegboardPanel.Invalidate();
             UpdatePegInfoPanel(selectedPeg);
+        }
+
+        private static List<TreeNode> GetAllNodesFlat(TreeNodeCollection nodes)
+        {
+            var result = new List<TreeNode>();
+            foreach (TreeNode node in nodes)
+            {
+                result.Add(node);
+                result.AddRange(GetAllNodesFlat(node.Nodes));
+            }
+            return result;
+        }
+
+        private void HighlightTreeSelection()
+        {
+            var selected = pegboardPanel.SelectedPegs;
+            void Recurse(TreeNodeCollection nodes)
+            {
+                foreach (TreeNode node in nodes)
+                {
+                    bool isSel = selected.Count > 1 && node.Tag is PegboardParser.TransformData peg && selected.Contains(peg);
+                    node.BackColor = isSel ? Color.FromArgb(255, 220, 150) : Color.Empty;
+                    Recurse(node.Nodes);
+                }
+            }
+            Recurse(pegTreeView.Nodes);
         }
 
         private void OnCanvasPegClicked(PegboardParser.TransformData peg)
         {
             TreeNode node = FindTreeNode(pegTreeView.Nodes, peg);
             if (node != null)
+            {
+                _isSyncingTreeFromCanvas = true;
                 pegTreeView.SelectedNode = node;
+                _isSyncingTreeFromCanvas = false;
+            }
         }
 
         private void OnPegMoved(PegboardParser.TransformData dragPeg,

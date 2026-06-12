@@ -78,6 +78,17 @@ public class PegboardPanel : Panel
         return (50 * peg.posX + 400 - sizeX / 2, -50 * peg.posY - sizeY / 2, sizeX, sizeY);
     }
 
+    private static bool IsGroup(PegboardParser.TransformData peg) => peg.prefab == null;
+
+    private static (float x, float y, float sizeX, float sizeY) GroupScreenBounds(PegboardParser.TransformData peg)
+    {
+        var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
+        const float shrink = 0.9f;
+        float newSizeX = sizeX * shrink;
+        float newSizeY = sizeY * shrink;
+        return (x + (sizeX - newSizeX) / 2, y + (sizeY - newSizeY) / 2, newSizeX, newSizeY);
+    }
+
     private PegboardParser.TransformData HitTest(Point pt)
     {
         // Return the first non-highlighted peg hit; fall back to highlighted peg so
@@ -201,8 +212,8 @@ public class PegboardPanel : Panel
                         newX = MathF.Round(newX / snapUnit) * snapUnit;
                         newY = MathF.Round(newY / snapUnit) * snapUnit;
                     }
-                    peg.posX = newX;
-                    peg.posY = newY;
+                    peg.posX = MathF.Round(newX, 4);
+                    peg.posY = MathF.Round(newY, 4);
                 }
 
                 Invalidate();
@@ -381,14 +392,16 @@ public class PegboardPanel : Panel
                            : isSelected    ? Color.Orange
                            : baseColor;
 
-            var (x, y, sizeX, sizeY) = PegScreenBounds(peg);
+            bool isGroup = IsGroup(peg);
+            var (x, y, sizeX, sizeY) = isGroup ? GroupScreenBounds(peg) : PegScreenBounds(peg);
 
             // Invisible pegs get a faint fill when not selected/highlighted
             int fillAlpha = isInvisible && !isHighlighted && !isSelected ? 55 : 255;
             using var brush = new SolidBrush(Color.FromArgb(fillAlpha, pegColor));
             string ct = peg.prefab?.componentType ?? "";
 
-            g.FillEllipse(brush, x, y, sizeX, sizeY);
+            if (isGroup) g.FillRectangle(brush, x, y, sizeX, sizeY);
+            else g.FillEllipse(brush, x, y, sizeX, sizeY);
 
             // Long peg: Bezier spline through control points (local-space, offset by peg world pos).
             // Requires SerializationPolicies.Everything so private m_ControlPoints on Spline is populated.
@@ -451,7 +464,8 @@ public class PegboardPanel : Panel
             if (isDisabled && !isHighlighted)
             {
                 using var disabledOverlay = new SolidBrush(Color.FromArgb(150, 40, 40, 40));
-                g.FillEllipse(disabledOverlay, x, y, sizeX, sizeY);
+                if (isGroup) g.FillRectangle(disabledOverlay, x, y, sizeX, sizeY);
+                else g.FillEllipse(disabledOverlay, x, y, sizeX, sizeY);
             }
 
             // Invisible peg: dashed white outline so editors can locate them
@@ -529,7 +543,8 @@ public class PegboardPanel : Panel
             if (peg == _hoveredPeg && !isHighlighted)
             {
                 using var hoverPen = new Pen(Color.White, 2f);
-                g.DrawEllipse(hoverPen, x, y, sizeX, sizeY);
+                if (isGroup) g.DrawRectangle(hoverPen, x, y, sizeX, sizeY);
+                else g.DrawEllipse(hoverPen, x, y, sizeX, sizeY);
             }
         }
 

@@ -477,7 +477,10 @@ namespace Starchild
                     "dragon_peg_layout_simulator ",
                     "obstacle_obscured_peg_grid",
                 });
-                compDropdown.SelectedIndex = 0;
+                if (_lastAddedComponentType != null && compDropdown.Items.Contains(_lastAddedComponentType))
+                    compDropdown.SelectedItem = _lastAddedComponentType;
+                else
+                    compDropdown.SelectedIndex = 0;
 
                 var addCompBtn = new Button() { Text = "Add", Location = new Point(226, yOffset - 1), Width = 84 };
                 addCompBtn.Click += (s, ev) =>
@@ -501,6 +504,7 @@ namespace Starchild
                         _ => null
                     };
                     if (compType == null) return;
+                    _lastAddedComponentType = chosen;
                     var newComp = (PegboardParser.Component)RuntimeHelpers.GetUninitializedObject(compType);
                     newComp.componentType = chosen;
                     if (newComp is PegboardParser.LinearPegMovementData lpm)
